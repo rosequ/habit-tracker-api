@@ -1,0 +1,36 @@
+[project]
+name = "habit-tracker-api"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.14"
+dependencies = [
+    "alembic>=1.18.5",
+    "asyncpg>=0.31.0",
+    "fastapi>=0.139.0",
+    "python-dotenv>=1.2.2",
+    "sqlmodel>=0.0.39",
+    "uvicorn[standard]>=0.50.2",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "import-linter>=2.13",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.15.20",
+]
+
+[tool.importlinter]
+root_package = "app"
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+layers = [
+    "app.routes",
+    "app.schemas",
+    "app.services",
+    "app.repository",
+    "app.db",
+]
