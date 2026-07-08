@@ -4,7 +4,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
 
-from app.db.models import Habit
+from app.db.models import Completion, Habit
 from app.db.session import async_session_maker
 from app.main import app
 
@@ -13,6 +13,7 @@ from app.main import app
 async def _clean_habits_table() -> AsyncGenerator[None, None]:
     yield
     async with async_session_maker() as session:
+        await session.execute(delete(Completion))
         await session.execute(delete(Habit))
         await session.commit()
 
