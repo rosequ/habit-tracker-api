@@ -27,7 +27,7 @@ The codebase already has a full vertical slice for `Habit`
 import-linter "layers" contract (`app.routes` → `app.schemas` →
 `app.services` → `app.repository` → `app.db`, higher layers may depend on
 lower ones only) and a 400-line-per-file guard
-(`scripts/check_file_size.py`, run via `make lint`). The completions
+(`scripts/check_file_sizes.py`, run via `make lint`). The completions
 feature will add one new file per layer, mirroring `*_habits.py` naming,
 rather than growing the existing habit files.
 
