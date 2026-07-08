@@ -1,4 +1,4 @@
-.PHONY: dev lint test agent-review-local agent-review-cloud
+.PHONY: dev lint test test-integration agent-review-local agent-review-cloud
 
 dev:
 	uv run uvicorn app.main:app --reload --port $${APP_PORT:-8000}
@@ -9,7 +9,10 @@ lint:
 	uv run python scripts/check_file_sizes.py
 
 test:
-	uv run pytest
+	uv run pytest tests --ignore=tests/integration
+
+test-integration:
+	uv run pytest tests/integration
 
 # Fast, cheap pass: lint + a Haiku-powered check that the diff matches Plan.md.
 # Run this first, in a loop, while implementing.
