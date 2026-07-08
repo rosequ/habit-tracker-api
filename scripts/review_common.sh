@@ -14,14 +14,28 @@ BASE_REF="${BASE_REF:-main}"
 # clone). Assumes a single root commit; a repo with multiple root commits
 # (e.g. a history graft) would need a different fallback.
 review_merge_base() {
-    git merge-base HEAD "$BASE_REF" 2>/dev/null || git rev-list --max-parents=0 HEAD | tail -n1
+    if git merge-base HEAD "$BASE_REF" 2>/dev/null; then
+        return 0
+    fi
+    echo "warning: could not resolve BASE_REF '$BASE_REF' as an ancestor of HEAD -- falling back to this repo's first commit, so the diff below is the *entire* history, not just this branch. Set BASE_REF to the correct base branch if that's wrong." >&2
+    git rev-list --max-parents=0 HEAD | tail -n1
 }
 
 # Committed + staged + unstaged changes on this branch, relative to where it
-# forked from. `git diff <merge-base>` (no second ref) compares against the
-# working tree, so uncommitted work is included without extra plumbing.
+# forked from. `git diff <merge-base>` (no second ref) compares the merge
+# base against the working tree, so modifications to already-tracked files
+# are included without extra plumbing -- but it never shows brand-new files
+# that haven't been `git add`ed at all, since git diff only walks paths that
+# are tracked in the tree or index. Union in untracked (non-ignored) files as
+# synthetic "new file" diffs so a forgotten `git add` can't hide unplanned
+# scope from either review target.
 review_full_diff() {
-    git diff "$(review_merge_base)" -- .
+    local merge_base
+    merge_base="$(review_merge_base)"
+    git diff "$merge_base"
+    git ls-files --others --exclude-standard -z | while IFS= read -r -d '' f; do
+        git diff --no-index -- /dev/null "$f" || true
+    done
 }
 
 require_plan() {

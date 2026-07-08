@@ -9,6 +9,9 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 source scripts/review_common.sh
 
+# claude-sonnet-5 is the current Sonnet 5 model ID (not a dated snapshot --
+# unlike LOCAL_MODEL in agent_review_local.sh, Sonnet's short ID is stable).
+# Override with CLOUD_MODEL=claude-opus-4-8 for the deeper/pricier option.
 CLOUD_MODEL="${CLOUD_MODEL:-claude-sonnet-5}"
 REVIEW_DIR=".agent-review"
 mkdir -p "$REVIEW_DIR"
@@ -25,12 +28,17 @@ fi
 plan_content="$(cat Plan.md)"
 
 issue_number="$(current_issue_number)"
-issue_section="No linked GitHub issue was found for this branch/PR."
-if [[ -n "$issue_number" ]] && command -v gh >/dev/null 2>&1; then
+if [[ -z "$issue_number" ]]; then
+    issue_section="No linked GitHub issue was found for this branch/PR."
+elif ! command -v gh >/dev/null 2>&1; then
+    issue_section="Issue #$issue_number is linked, but the gh CLI isn't available to fetch it."
+else
     issue_json="$(gh issue view "$issue_number" --json title,body 2>/dev/null || true)"
-    if [[ -n "$issue_json" ]]; then
+    if [[ -z "$issue_json" ]]; then
+        issue_section="Issue #$issue_number is linked, but \`gh issue view\` failed (auth/network?) -- its acceptance criteria could not be fetched."
+    else
         issue_title="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])' <<< "$issue_json")"
-        issue_body="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["body"])' <<< "$issue_json")"
+        issue_body="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["body"] or "")' <<< "$issue_json")"
         issue_section="Issue #$issue_number: $issue_title
 
 $issue_body"

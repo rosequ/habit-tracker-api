@@ -27,7 +27,12 @@ fi
 
 plan_content="$(cat Plan.md)"
 
-prompt="$(cat <<EOF
+# Delimiter is deliberately unique (not "EOF") -- $plan_content is arbitrary
+# Plan.md prose, unlike $diff_content, which can't contain a bare "EOF" line
+# since every diff line is prefixed with +/-/space/header. A Plan.md that
+# happens to contain a standalone "EOF" line (plausible for a plan describing
+# heredocs, e.g. this one) would otherwise silently truncate the prompt.
+prompt="$(cat <<LOCAL_PROMPT_EOF_4c1b
 You are a fast, cheap pre-review gate in an automated review loop. Do not
 review code quality or correctness in depth -- only check plan coverage.
 
@@ -48,7 +53,7 @@ Respond with:
 2. A final line, exactly one of:
 RESULT: PASS
 RESULT: FAIL
-EOF
+LOCAL_PROMPT_EOF_4c1b
 )"
 
 echo "==> Checking diff against Plan.md with $LOCAL_MODEL"

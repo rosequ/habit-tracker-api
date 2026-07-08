@@ -26,7 +26,8 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 - `make agent-review-cloud` — deeper: an isolated read-only reviewer checks the diff
   against Plan.md and the linked GitHub issue's acceptance criteria
 
-Both require a committed `Plan.md` at the repo root. Loop: implement -> `agent-review-local`
+Both require a committed `Plan.md` at the repo root, and the `claude` CLI installed and
+authenticated separately (they shell out to it). Loop: implement -> `agent-review-local`
 -> fix -> repeat until clean -> `agent-review-cloud` -> address comments -> repeat.
 
 ## Escalate to a human when
