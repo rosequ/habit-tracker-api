@@ -1,135 +1,130 @@
-# Plan: Issue #1 — Create a habit
+# Plan: Log a habit completion for a given day (Issue #3)
 
-## Research findings
+## Context
 
-**Repo state:** `add-habit-create` branched off the initial commit, before the
-scaffold (`AGENTS.md`, docs, `app/` package skeleton, `pyproject.toml`, etc.)
-was added on `main`. Merged `main` into this branch (fast-forward, no
-conflicts) to get the scaffold before starting. `uv sync` installs cleanly;
-Python 3.14 + uv are available locally.
+Issue #3 (https://github.com/rosequ/habit-tracker-api/issues/3) asks for
+`POST /habits/{habit_id}/completions` to record that a habit was done on a
+given day. This worktree branches from `origin/main` (PR #2, which already
+merged the Habit model, `POST`/`GET /habits`, and the `/health` +
+out-of-process integration test infrastructure), so that foundation is
+already in place — this plan only adds the completions endpoint on top of
+it, following the existing 5-layer architecture.
 
-**AGENTS.md — non-negotiable rules:**
-- Dependency direction: `routes -> schemas -> services -> repository -> db`.
-- `app/repository/` is the ONLY layer allowed to touch `app/db/` (no raw SQL
-  or session objects elsewhere).
-- No business logic in `app/routes/` — routes call services, nothing else.
-- File size limit: 400 lines.
-- Verify with `make test`, `make dev`, `make lint`.
+## Acceptance criteria (from the issue)
 
-**api-conventions.md:**
-- Layering enforced by `import-linter` (`pyproject.toml`
-  `[tool.importlinter]`, contract type `layers`, list `[app.routes,
-  app.schemas, app.services, app.repository, app.db]`). I inspected the
-  installed `import_linter` contract source directly: layers are ordered
-  highest → lowest, and a **higher layer may import any lower layer**
-  (not just the adjacent one) — imports are only forbidden in the reverse
-  (lower importing higher) direction. `app/routes/` must never import
-  `app/db/`.
-- All I/O is async (`async def`, `await session.execute/commit`).
-- DB models (`app/db/models.py`, `SQLModel table=True`) are distinct from
-  `app/schemas/` request/response models — a DB row is never returned
-  directly from a route.
-- Validation errors → 422 with field-level message; not-found → 404; no raw
-  stack traces.
+- `POST /habits/{habit_id}/completions` with a date (defaults to today if omitted)
+- Returns 201 + the created completion record
+- Duplicate completion for the same habit + date returns 409 (not a silent upsert)
+- Completion date cannot be in the future — 422 if it is
+- Habit must exist — 404 if `habit_id` is invalid
+- Out of scope: editing/deleting completions, streak calculation
 
-**Key layering implication for this design:** since `app.schemas` sits
-*above* `app.services` in the layer list, `app/services/` importing
-`app/schemas/` would be a forbidden reverse import. So schemas are consumed
-only in `app/routes/` (parsing the request body, shaping the response);
-routes unpack the validated Pydantic model into plain primitives before
-calling the service. Services and repositories work in plain
-values/ORM objects, never Pydantic request/response types.
+## Existing patterns being reused
 
-**docs/domains/habits/README.md — Habit fields:**
-- `name`: string, 1–100 chars, required
-- `daily_target`: integer, > 0, required
-- `category`: string, 1–50 chars, required
-- `created_at`: set server-side (app layer), not client-provided
-- Out of scope now: update/delete, listing, check-ins/streaks.
+The codebase already has a full vertical slice for `Habit`
+(`app/db/models.py`, `app/schemas/habits.py`, `app/repository/habits.py`,
+`app/services/habits.py`, `app/routes/habits.py`) enforced by an
+import-linter "layers" contract (`app.routes` → `app.schemas` →
+`app.services` → `app.repository` → `app.db`, higher layers may depend on
+lower ones only) and a 400-line-per-file guard
+(`scripts/check_file_size.py`, run via `make lint`). The completions
+feature will add one new file per layer, mirroring `*_habits.py` naming,
+rather than growing the existing habit files.
 
-**Issue #1 acceptance criteria:**
-- `POST /habits` accepts `{name, daily_target, category}`.
-- Missing/invalid fields → HTTP 422, field-level error.
-- Success → HTTP 201 with `{id, name, daily_target, category, created_at}`.
-- Persisted in Postgres `habits` table (not in-memory).
-- `GET /habits/{id}` returns the exact habit just created.
-- Structural lint definition is pending Lesson 6 — only `ruff` +
-  `import-linter` run today.
-- Out of scope: update/delete/list/check-ins.
-- PR must include: successful POST log, a 422 validation-failure log, and
-  the `habits` table schema.
+Key existing pieces to reuse directly:
+- `app/repository/habits.py::HabitRepository.get_by_id` — used to check the
+  habit exists before recording a completion.
+- `app/db/session.py::get_session` — the `AsyncSession` dependency, same as
+  `HabitRepository`.
+- `tests/integration/conftest.py` — already spins up a real `uvicorn`
+  subprocess (`live_server` fixture) and truncates all `SQLModel.metadata`
+  tables between tests; no changes needed there, just add a new test module.
+- `tests/conftest.py::_clean_habits_table` — needs to also delete rows from
+  the new `completions` table (FK to `habits`) so per-test cleanup doesn't
+  hit a foreign-key violation.
 
-**Environment:** `.envrc` (direnv, already loaded) namespaces this worktree
-to `DB_PORT=5433`, `APP_PORT=8001`, pointing at a separate `docker-compose`
-Postgres project (default project name = directory name `add-habit-create`,
-so it won't collide with the unrelated `habit-tracker-api-db-1` container
-already running on port 5432 from another checkout).
+## Implementation
 
-**Migrations:** Resolved — a real Alembic migration is expected, not
-`create_all`. `app/db/models.py` (`Habit`) and `app/db/session.py` (async
-engine + `get_database_url()`) now exist, along with a full Alembic
-scaffold (`alembic init -t async alembic`) wired to `SQLModel.metadata` and
-`DATABASE_URL`. The initial `create habits table` migration is generated,
-reviewed, and applied (`alembic upgrade head`); downgrade/upgrade round-trip
-verified against the docker-compose Postgres. Table creation is owned
-solely by `alembic upgrade head` from here on — `app/main.py`'s future
-lifespan must NOT call `SQLModel.metadata.create_all`.
+**1. Model — `app/db/models.py`**
 
-Note: SQLAlchemy's `greenlet` dependency (required for the async engine's
-`run_sync`, which Alembic's async template relies on) has a platform marker
-that checks for `aarch64` and misses macOS Apple Silicon's `arm64` — added
-`greenlet` explicitly as a direct dependency (`uv add greenlet`) to fix this
-on this machine.
+Add a `Completion` SQLModel table:
+- `id: int | None` primary key
+- `habit_id: int` — `ForeignKey("habits.id")`, not null
+- `completion_date: date` — not null
+- `created_at: datetime` — tz-aware, default `datetime.now(timezone.utc)` (same pattern as `Habit.created_at`)
+- `UniqueConstraint("habit_id", "completion_date")` — this is what turns a
+  duplicate insert into a DB-level conflict rather than a silent upsert.
 
-## Approach (routes → schemas → services → repository → db)
+**2. Migration — `alembic/versions/`**
 
-1. **`app/db/models.py`** — `Habit(SQLModel, table=True)`: `id` (PK,
-   optional int), `name` (1–100), `daily_target` (int, gt=0), `category`
-   (1–50), `created_at` (datetime, `default_factory=utcnow`).
-2. **`app/db/session.py`** — async engine from `DATABASE_URL` env var,
-   `async_sessionmaker`, `get_session()` FastAPI dependency (yields
-   `AsyncSession`).
-3. **`app/repository/habits.py`** — `HabitRepository` with `create(*, name,
-   daily_target, category) -> Habit` and `get_by_id(habit_id) -> Habit |
-   None`; plus a `get_habit_repository(session=Depends(get_session))`
-   FastAPI dependency provider. Only file besides `app/db/*` that imports
-   `app.db`.
-4. **`app/services/habits.py`** — `HabitService` wrapping a
-   `HabitRepository`, exposing `create_habit(*, name, daily_target,
-   category)` and `get_habit(habit_id)` (thin pass-through today; this is
-   where future business rules land). Plus `get_habit_service(repository=
-   Depends(get_habit_repository))` dependency provider. Imports only
-   `app.repository`.
-5. **`app/schemas/habits.py`** — `HabitCreate` (name/daily_target/category
-   with `Field` constraints matching the domain doc, giving free 422s from
-   FastAPI/Pydantic) and `HabitRead` (id, name, daily_target, category,
-   created_at; `from_attributes=True` so it can be built straight from the
-   ORM row). No imports from lower layers.
-6. **`app/routes/habits.py`** — `APIRouter(prefix="/habits")`:
-   - `POST /habits` → 201, body `HabitCreate`, calls
-     `service.create_habit(...)`, returns via `response_model=HabitRead`.
-   - `GET /habits/{habit_id}` → 200 `HabitRead`, or raises
-     `HTTPException(404)` if the service returns `None`.
-   Imports only `app.schemas` and `app.services`.
-7. **`app/main.py`** — FastAPI app; lifespan does NOT create tables (that's
-   `alembic upgrade head`'s job now); includes the habits router.
-   (Composition root, outside the layer contract, so it's the one place
-   allowed to touch `app.db` and `app.routes` together.)
-8. **Tests (`tests/`)** — pytest-asyncio + httpx `ASGITransport` against the
-   real app, backed by the real docker-compose Postgres (matches "not
-   in-memory" requirement); a fixture creates tables and cleans up rows
-   between tests. Cover: successful create+fetch round trip, and a 422 on
-   invalid payload (e.g. empty `name`).
-9. Add `[tool.pytest.ini_options] asyncio_mode = "auto"` to `pyproject.toml`
-   so async tests run without per-test markers.
-10. Bring up `docker-compose up -d` for this worktree, run `make lint` and
-    `make test`, then manually exercise `POST /habits` and `GET
-    /habits/{id}` (including a bad payload) to capture the logs the PR
-    requires.
+Run `alembic revision --autogenerate -m "create completions table"` against
+the local dev Postgres (`DATABASE_URL` from `.envrc`), review the generated
+`create_table` (FK constraint + unique constraint), then `alembic upgrade
+head` to apply it before running tests.
 
-## Open assumption to flag
-~~Using `create_all` instead of an Alembic migration for the `habits`
-table.~~ Resolved: real Alembic migrations are used instead (see
-"Migrations" above). Remaining feature work (routes, schemas, services,
-repository, tests) is still pending — only the DB layer + migration
-tooling has been built so far.
+**3. Schemas — `app/schemas/completions.py`**
+
+- `CompletionCreate`: `completion_date: date | None = None`
+- `CompletionRead` (`from_attributes=True`): `id`, `habit_id`,
+  `completion_date`, `created_at`
+
+**4. Repository — `app/repository/completions.py`**
+
+`CompletionRepository.create(habit_id, completion_date)`: insert, commit,
+and catch `sqlalchemy.exc.IntegrityError` from the unique constraint,
+rolling back and raising a repository-level `DuplicateCompletionError`.
+Plus the standard `get_completion_repository` FastAPI dependency.
+
+**5. Service — `app/services/completions.py`**
+
+`CompletionService.create_completion(habit_id, completion_date)`:
+- Resolve `completion_date` to today (UTC) if not supplied.
+- Raise `FutureCompletionDateError` if the resolved date is after today (UTC).
+- Look up the habit via `HabitRepository.get_by_id`; raise
+  `HabitNotFoundError` if missing.
+- Delegate to `CompletionRepository.create`, translating the repository's
+  `DuplicateCompletionError` into a service-level `DuplicateCompletionError`
+  (keeps the repository's SQLAlchemy-flavored exception out of the service/route
+  contract).
+- `get_completion_service` dependency wires both `HabitRepository` and
+  `CompletionRepository`.
+
+**6. Route — `app/routes/habits.py`**
+
+Add `POST /{habit_id}/completions` to the existing `habits` router (same
+file, since it's nested under `/habits` and the file is well under the
+400-line cap). Catch the three service exceptions and map to HTTP status
+codes: `HabitNotFoundError` → 404, `FutureCompletionDateError` → 422
+(`status.HTTP_422_UNPROCESSABLE_CONTENT`, the non-deprecated constant),
+`DuplicateCompletionError` → 409. Return `CompletionRead` with 201 on success.
+
+**7. Tests**
+
+- `tests/test_completions.py` (unit/functional, in-process ASGI client via
+  the existing `client` fixture): happy path with explicit date, default-to-today,
+  duplicate → 409, future date → 422, missing habit → 404.
+- `tests/integration/test_completions_flow.py` (out-of-process, real
+  `uvicorn` subprocess via the `live_server`/`client` fixtures in
+  `tests/integration/conftest.py`): happy path, 409 duplicate, 422 future
+  date (the three cases the task explicitly calls out).
+- Update `tests/conftest.py`'s `_clean_habits_table` fixture to delete
+  `Completion` rows before `Habit` rows (FK ordering).
+
+**8. Plan.md**
+
+Commit this plan as `Plan.md` at the repo root of this worktree, since the
+review infrastructure checks the implementation against it.
+
+## Verification
+
+1. `make lint` — ruff, import-linter (layered architecture contract still
+   holds — completions files sit at the same layers as habits files), and
+   the file-size guard.
+2. `make test` — in-process unit tests (`tests/test_completions.py` +
+   existing `tests/test_habits.py`).
+3. `make test-integration` — out-of-process tests against a live `uvicorn`
+   subprocess (`tests/integration/test_completions_flow.py` + existing
+   `tests/integration/test_habits_flow.py`), confirming the happy path, 409
+   duplicate, and 422 future-date cases work against a real running server
+   and real Postgres.
+4. Commit the implementation + `Plan.md` in this worktree.
