@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: habit
+      POSTGRES_PASSWORD: habit_dev_password
+      POSTGRES_DB: habit_tracker
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - habit_pgdata:/var/lib/postgresql/data
+
+volumes:
+  habit_pgdata:
