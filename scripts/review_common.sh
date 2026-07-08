@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Shared helpers for the agent-review-local / agent-review-cloud Makefile targets.
+
+# This script is invoked from inside a Claude Code session (the implementer's),
+# which sets these in its own environment. Strip them so every nested `claude
+# -p` call this loop makes is forced to start a brand-new, isolated session --
+# it must never be able to attach to or continue the calling session.
+unset CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION
+
+BASE_REF="${BASE_REF:-main}"
+
+# The commit this branch forked from. Falls back to the repo root commit if
+# BASE_REF isn't reachable (e.g. running this on main itself, or a shallow
+# clone). Assumes a single root commit; a repo with multiple root commits
+# (e.g. a history graft) would need a different fallback.
+review_merge_base() {
+    if git merge-base HEAD "$BASE_REF" 2>/dev/null; then
+        return 0
+    fi
+    echo "warning: could not resolve BASE_REF '$BASE_REF' as an ancestor of HEAD -- falling back to this repo's first commit, so the diff below is the *entire* history, not just this branch. Set BASE_REF to the correct base branch if that's wrong." >&2
+    git rev-list --max-parents=0 HEAD | tail -n1
+}
+
+# Committed + staged + unstaged changes on this branch, relative to where it
+# forked from. `git diff <merge-base>` (no second ref) compares the merge
+# base against the working tree, so modifications to already-tracked files
+# are included without extra plumbing -- but it never shows brand-new files
+# that haven't been `git add`ed at all, since git diff only walks paths that
+# are tracked in the tree or index. Union in untracked (non-ignored) files as
+# synthetic "new file" diffs so a forgotten `git add` can't hide unplanned
+# scope from either review target.
+review_full_diff() {
+    local merge_base
+    merge_base="$(review_merge_base)"
+    git diff "$merge_base"
+    git ls-files --others --exclude-standard -z | while IFS= read -r -d '' f; do
+        git diff --no-index -- /dev/null "$f" || true
+    done
+}
+
+require_plan() {
+    if [[ ! -f Plan.md ]]; then
+        echo "Plan.md not found at repo root. Commit a Plan.md describing this branch's intended changes before running review." >&2
+        exit 1
+    fi
+}
+
+# Resolve the GitHub issue this branch/PR is meant to close: explicit ISSUE
+# env var, else a "Closes #N" / "Fixes #N" / "Resolves #N" keyword in the open
+# PR body. Deliberately does NOT grep Plan.md prose for a bare "#N" -- a plan
+# can reference an issue in passing (e.g. an "out of scope" note) without that
+# issue being the one this branch closes, which would silently mismatch the
+# review against the wrong acceptance criteria.
+# Prints nothing (not an error) if none can be found.
+current_issue_number() {
+    if [[ -n "${ISSUE:-}" ]]; then
+        printf '%s\n' "$ISSUE"
+        return 0
+    fi
+
+    if command -v gh >/dev/null 2>&1; then
+        gh pr view --json body -q '.body' 2>/dev/null \
+            | grep -Eio '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' \
+            | grep -Eo '[0-9]+' \
+            | head -n1 || true
+    fi
+}

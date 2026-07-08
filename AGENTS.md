@@ -21,7 +21,14 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 ## How to verify your work
 - `make test`  — unit + structural tests
 - `make dev`   — boots the app for this worktree (uses .envrc DB/port namespace)
-- `make lint`  — includes architecture fitness checks; read the error, it tells you the fix
+- `make lint`  — ruff + import-linter + file-size check; read the error, it tells you the fix
+- `make agent-review-local` — fast/cheap: lint + flags diff not covered by Plan.md
+- `make agent-review-cloud` — deeper: an isolated read-only reviewer checks the diff
+  against Plan.md and the linked GitHub issue's acceptance criteria
+
+Both require a committed `Plan.md` at the repo root, and the `claude` CLI installed and
+authenticated separately (they shell out to it). Loop: implement -> `agent-review-local`
+-> fix -> repeat until clean -> `agent-review-cloud` -> address comments -> repeat.
 
 ## Escalate to a human when
 - Change touches auth, billing, or data retention

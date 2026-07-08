@@ -20,3 +20,6 @@ htmlcov/
 
 # Claude Code local state
 .claude/
+
+# agent-review-cloud output
+.agent-review/
