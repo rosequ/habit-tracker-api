@@ -67,6 +67,11 @@ echo "==> Running isolated read-only reviewer subagent with $CLOUD_MODEL"
 timestamp="$(date +%Y%m%d-%H%M%S)"
 out_file="$REVIEW_DIR/cloud-review-$timestamp.md"
 
+# No --continue/--resume/--session-id: this is always a brand-new session,
+# with no memory of the implementer's session or any prior review run.
+# --tools "Read,Glob,Grep" hard-restricts the tool set to read-only -- Edit,
+# Write, and Bash are not in the list, so this reviewer cannot modify the
+# repository regardless of --permission-mode.
 claude -p \
     --model "$CLOUD_MODEL" \
     --tools "Read,Glob,Grep" \

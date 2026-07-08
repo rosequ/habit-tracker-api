@@ -14,6 +14,9 @@ against their own branches before opening/updating a PR.
   a `Closes #N`/`Fixes #N`/`Resolves #N` keyword in the PR body only --
   deliberately does not grep Plan.md prose for a bare `#N`, since a plan can
   mention an issue in passing without that issue being the one it closes).
+  Also strips `CLAUDE_CODE_SESSION_ID`/`CLAUDE_CODE_CHILD_SESSION` from the
+  environment so nested `claude -p` calls can never attach to the calling
+  (implementer's) session.
 - `scripts/agent_review_local.sh` — new. Runs `make lint`, then asks a Haiku
   model (headless `claude -p`, no tools) whether the diff matches Plan.md.
   Exits non-zero on lint failure or unplanned diff.

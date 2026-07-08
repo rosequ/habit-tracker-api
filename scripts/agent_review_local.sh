@@ -52,6 +52,10 @@ EOF
 )"
 
 echo "==> Checking diff against Plan.md with $LOCAL_MODEL"
+# No --continue/--resume/--session-id: every run is a brand-new session with
+# no memory of prior runs. --tools "" strips all tools, so this call has no
+# write access (or any tool access at all) -- it can only read the prompt and
+# respond with text.
 output="$(claude -p \
     --model "$LOCAL_MODEL" \
     --tools "" \

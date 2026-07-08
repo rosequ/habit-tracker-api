@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Shared helpers for the agent-review-local / agent-review-cloud Makefile targets.
 
+# This script is invoked from inside a Claude Code session (the implementer's),
+# which sets these in its own environment. Strip them so every nested `claude
+# -p` call this loop makes is forced to start a brand-new, isolated session --
+# it must never be able to attach to or continue the calling session.
+unset CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION
+
 BASE_REF="${BASE_REF:-main}"
 
 # The commit this branch forked from. Falls back to the repo root commit if
