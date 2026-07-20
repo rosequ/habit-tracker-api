@@ -17,9 +17,11 @@ permissions:
   pull-requests: read
 
 jobs:
-  # Required status check (see branch protection on main). Keep this fast and
-  # blocking-worthy: lint, unit tests, secret scan. Nothing here should need
-  # more than a couple of minutes.
+  # Intended as a required status check on main (blocking merge). Keep this
+  # fast and blocking-worthy: lint, unit tests, secret scan -- nothing here
+  # should need more than a couple of minutes. Branch protection enforcing
+  # that isn't configured yet -- blocked on the repo's GitHub plan, not this
+  # workflow. See issue #7.
   fast-gates:
     name: fast-gates
     runs-on: ubuntu-latest
