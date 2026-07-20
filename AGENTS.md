@@ -34,3 +34,25 @@ authenticated separately (they shell out to it). Loop: implement -> `agent-revie
 - Change touches auth, billing, or data retention
 - Change requires a new external dependency
 - You are not confident the fix addresses the root cause
+
+## CI/CD (.github/workflows/)
+- `ci.yml` — on every PR: `fast-gates` (lint, test, gitleaks secret scan) is
+  the required check that blocks merge. `async-verification` runs
+  `make test-integration` after `fast-gates` but is non-blocking, and on
+  failure dispatches `agent-followup.yml`. `doc-freshness` runs
+  `make lint-docs` (non-blocking placeholder).
+- `agent-followup.yml` — dispatched on integration-test failure (which can
+  surface after the PR already merged, since the check is non-blocking).
+  Headless Claude Code fixes forward on a new branch off `main` and opens a
+  PR labeled `needs-human-review`. Never pushes to `main` directly, never
+  merges.
+- `agent-ticket.yml` — dispatched when an issue is labeled `agent-ready`.
+  Headless Claude Code implements the issue on a new branch, writes tests,
+  and self-verifies with `make lint`/`test`/`test-integration` before the
+  workflow independently re-runs the same three and opens a PR labeled
+  `needs-human-review`. Never merges, regardless of check status.
+- `deploy.yml` — on push to `main` (which requires `fast-gates` to have
+  passed), triggers a Render deploy via deploy hook.
+
+Every agent-authored PR from the two workflows above is labeled
+`needs-human-review` — a human always reviews before merging, no exception.
