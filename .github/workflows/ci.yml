@@ -35,7 +35,13 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
+      # fetch-depth: 0 (full history) -- gitleaks-action diffs the PR's base
+      # and head commits by SHA; actions/checkout's default shallow clone
+      # doesn't contain those commits, which makes that diff fail with
+      # "unknown revision or path not in the working tree".
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v5
         with:
