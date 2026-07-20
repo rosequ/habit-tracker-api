@@ -1,4 +1,4 @@
-.PHONY: dev lint test test-integration agent-review-local agent-review-cloud
+.PHONY: dev lint lint-docs test test-integration agent-review-local agent-review-cloud
 
 dev:
 	uv run uvicorn app.main:app --reload --port $${APP_PORT:-8000}
@@ -7,6 +7,11 @@ lint:
 	uv run ruff check .
 	uv run lint-imports
 	uv run python scripts/check_file_sizes.py
+
+# Placeholder doc-freshness check (non-blocking in CI): AGENTS.md and docs/
+# exist and are non-empty. Not a real freshness check yet -- see the script.
+lint-docs:
+	@bash scripts/check_docs_freshness.sh
 
 test:
 	uv run pytest tests --ignore=tests/integration

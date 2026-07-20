@@ -1,0 +1,151 @@
+name: Agent Follow-up
+
+# Dispatched by ci.yml's async-verification job when make test-integration
+# fails. Because async-verification is non-blocking and only starts once
+# fast-gates is green, the PR may already be merged by the time this fires —
+# so main can already contain the breaking change. This workflow fixes
+# forward: it never pushes to main directly, only opens a new PR for a human
+# to review and merge.
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "The PR number whose merge (or head, if not yet merged) triggered the integration failure"
+        required: true
+        type: string
+
+env:
+  DATABASE_URL: postgresql+asyncpg://habit:habit_dev_password@localhost:5432/habit_tracker
+  # tests/integration/conftest.py's live_server fixture boots uvicorn on
+  # APP_PORT + 1000, same convention as .envrc locally.
+  APP_PORT: 8000
+  PR_NUMBER: ${{ inputs.pr_number }}
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  fix-and-pr:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: habit
+          POSTGRES_PASSWORD: habit_dev_password
+          POSTGRES_DB: habit_tracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - run: uv run alembic upgrade head
+
+      - name: Reproduce the integration failure
+        id: repro
+        continue-on-error: true
+        run: uv run pytest tests/integration 2>&1 | tee /tmp/integration-failure.log
+
+      - name: Get the original PR's diff for context
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr diff "$PR_NUMBER" > /tmp/pr.diff || echo "(could not fetch PR diff)" > /tmp/pr.diff
+
+      - name: Create a working branch
+        run: |
+          branch="agent-followup/pr-${PR_NUMBER}-${GITHUB_RUN_NUMBER}"
+          echo "BRANCH=$branch" >> "$GITHUB_ENV"
+          git checkout -b "$branch"
+          git config user.name "habit-tracker-agent"
+          git config user.email "agent@users.noreply.github.com"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Ask Claude Code to fix the failure
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          failure_log="$(cat /tmp/integration-failure.log)"
+          pr_diff="$(cat /tmp/pr.diff)"
+          agents_md="$(cat AGENTS.md)"
+
+          # Unique delimiter, deliberately unquoted so $failure_log/$pr_diff/
+          # $agents_md expand -- none of them are trusted-empty of a bare
+          # "EOF" line, so a common delimiter could silently truncate this.
+          prompt="$(cat <<FOLLOWUP_PROMPT_EOF_7d2e
+          You are fixing a broken integration test suite on main, in an unattended
+          CI job. PR #$PR_NUMBER merged and its async integration tests
+          (make test-integration) are now failing on main.
+
+          You have full read/write access to this checkout (currently on a fresh
+          branch off main). Investigate the failure and make the smallest correct
+          fix. Follow the repo's layering contract below. Do NOT run git commit,
+          git push, or gh pr create yourself -- the workflow does that after you
+          finish, using whatever working-tree changes you leave behind. If you
+          cannot find a safe fix, leave the working tree unchanged and explain why
+          in your final message.
+
+          === AGENTS.md ===
+          $agents_md
+
+          === Diff introduced by PR #$PR_NUMBER ===
+          $pr_diff
+
+          === make test-integration failure output ===
+          $failure_log
+
+          After making a change, run \`make lint\`, \`make test\`, and
+          \`make test-integration\` yourself to confirm the fix is correct before
+          finishing.
+          FOLLOWUP_PROMPT_EOF_7d2e
+          )"
+
+          claude -p \
+            --model claude-sonnet-5 \
+            --permission-mode bypassPermissions \
+            <<< "$prompt"
+
+      - name: Push fix branch and open PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No changes produced -- commenting on the original PR instead of opening one."
+            gh pr comment "$PR_NUMBER" --body "Automated integration-failure follow-up ran but could not produce a fix. See workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Needs manual investigation."
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "Fix integration test failure from PR #$PR_NUMBER (automated)"
+          git push origin "$BRANCH"
+
+          gh label create needs-human-review --color B60205 --description "Unattended agent output -- requires human review before merge" --force
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "Fix integration test failure from PR #$PR_NUMBER" \
+            --label needs-human-review \
+            --body "Automated fix-forward for an integration test failure that surfaced on \`main\` after PR #$PR_NUMBER merged (async-verification is non-blocking, so it can fail after merge).
+
+          This PR was opened by an unattended agent (\`agent-followup.yml\`, run $GITHUB_RUN_ID). It has NOT been merged and must not be merged without human review.
+
+          ## Verification evidence
+          Re-run by the agent before opening this PR: \`make lint\`, \`make test\`, \`make test-integration\`. Re-check the Actions tab on this PR for the authoritative result."

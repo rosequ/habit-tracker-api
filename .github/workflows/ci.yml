@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  pull_request:
+
+env:
+  DATABASE_URL: postgresql+asyncpg://habit:habit_dev_password@localhost:5432/habit_tracker
+  # tests/integration/conftest.py's live_server fixture boots uvicorn on
+  # APP_PORT + 1000, same convention as .envrc locally.
+  APP_PORT: 8000
+
+permissions:
+  contents: read
+  # gitleaks-action's PR-scan mode calls GET /pulls/{n}/commits to diff just
+  # the PR's commits -- without this it 403s with "Resource not accessible
+  # by integration".
+  pull-requests: read
+
+jobs:
+  # Intended as a required status check on main (blocking merge). Keep this
+  # fast and blocking-worthy: lint, unit tests, secret scan -- nothing here
+  # should need more than a couple of minutes. Branch protection enforcing
+  # that isn't configured yet -- blocked on the repo's GitHub plan, not this
+  # workflow. See issue #7.
+  fast-gates:
+    name: fast-gates
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: habit
+          POSTGRES_PASSWORD: habit_dev_password
+          POSTGRES_DB: habit_tracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      # fetch-depth: 0 (full history) -- gitleaks-action diffs the PR's base
+      # and head commits by SHA; actions/checkout's default shallow clone
+      # doesn't contain those commits, which makes that diff fail with
+      # "unknown revision or path not in the working tree".
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - run: uv run alembic upgrade head
+
+      - run: make lint
+
+      - run: make test
+
+      # Secret scan. No dedicated secret-scanning tool was already configured
+      # in this repo, so gitleaks via its official Action. Free for
+      # individual-account repos; an org account would need GITLEAKS_LICENSE.
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Non-blocking. Our full integration/e2e equivalent for this API-only
+  # project (see Makefile) -- there is no separate e2e suite. Deliberately
+  # NOT a required status check: it must not gate merge. On failure it kicks
+  # off an automated fix-forward workflow, since by the time this fails the
+  # PR may already be merged (async-verification only starts once fast-gates
+  # is green, which can be after merge if the PR merged on fast-gates alone).
+  async-verification:
+    name: async-verification
+    needs: fast-gates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: habit
+          POSTGRES_PASSWORD: habit_dev_password
+          POSTGRES_DB: habit_tracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - run: uv run alembic upgrade head
+
+      - run: make test-integration
+
+      # Dispatches agent-followup.yml on the default branch, since
+      # workflow_dispatch always resolves the workflow file from `--ref`, not
+      # from this PR's branch. That means this trigger only works once
+      # ci.yml/agent-followup.yml have themselves been merged to main.
+      - name: Trigger agent follow-up
+        if: failure()
+        # continue-on-error: the job is already failed because of
+        # test-integration above -- that's the signal that matters. Before
+        # this workflow itself has ever merged to main, this dispatch 404s
+        # ("workflow agent-followup.yml not found on the default branch"),
+        # since workflow_dispatch always resolves from --ref. Don't let that
+        # bootstrapping gap mask or duplicate the real failure.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh workflow run agent-followup.yml \
+            --ref main \
+            -f pr_number="$PR_NUMBER"
+
+  # Non-blocking. Placeholder until a real doc-gardener agent exists.
+  doc-freshness:
+    name: doc-freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make lint-docs
