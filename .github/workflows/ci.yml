@@ -5,6 +5,9 @@ on:
 
 env:
   DATABASE_URL: postgresql+asyncpg://habit:habit_dev_password@localhost:5432/habit_tracker
+  # tests/integration/conftest.py's live_server fixture boots uvicorn on
+  # APP_PORT + 1000, same convention as .envrc locally.
+  APP_PORT: 8000
 
 permissions:
   contents: read
@@ -109,12 +112,20 @@ jobs:
       # ci.yml/agent-followup.yml have themselves been merged to main.
       - name: Trigger agent follow-up
         if: failure()
+        # continue-on-error: the job is already failed because of
+        # test-integration above -- that's the signal that matters. Before
+        # this workflow itself has ever merged to main, this dispatch 404s
+        # ("workflow agent-followup.yml not found on the default branch"),
+        # since workflow_dispatch always resolves from --ref. Don't let that
+        # bootstrapping gap mask or duplicate the real failure.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           gh workflow run agent-followup.yml \
             --ref main \
-            -f pr_number="${{ github.event.pull_request.number }}"
+            -f pr_number="$PR_NUMBER"
 
   # Non-blocking. Placeholder until a real doc-gardener agent exists.
   doc-freshness:

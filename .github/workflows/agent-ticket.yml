@@ -10,6 +10,9 @@ on:
 
 env:
   DATABASE_URL: postgresql+asyncpg://habit:habit_dev_password@localhost:5432/habit_tracker
+  # tests/integration/conftest.py's live_server fixture boots uvicorn on
+  # APP_PORT + 1000, same convention as .envrc locally.
+  APP_PORT: 8000
   ISSUE_NUMBER: ${{ github.event.issue.number }}
 
 permissions:
