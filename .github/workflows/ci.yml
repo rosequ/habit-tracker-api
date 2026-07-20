@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  pull_request:
+
+env:
+  DATABASE_URL: postgresql+asyncpg://habit:habit_dev_password@localhost:5432/habit_tracker
+
+permissions:
+  contents: read
+
+jobs:
+  # Required status check (see branch protection on main). Keep this fast and
+  # blocking-worthy: lint, unit tests, secret scan. Nothing here should need
+  # more than a couple of minutes.
+  fast-gates:
+    name: fast-gates
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: habit
+          POSTGRES_PASSWORD: habit_dev_password
+          POSTGRES_DB: habit_tracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - run: uv run alembic upgrade head
+
+      - run: make lint
+
+      - run: make test
+
+      # Secret scan. No dedicated secret-scanning tool was already configured
+      # in this repo, so gitleaks via its official Action. Free for
+      # individual-account repos; an org account would need GITLEAKS_LICENSE.
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Non-blocking. Our full integration/e2e equivalent for this API-only
+  # project (see Makefile) -- there is no separate e2e suite. Deliberately
+  # NOT a required status check: it must not gate merge. On failure it kicks
+  # off an automated fix-forward workflow, since by the time this fails the
+  # PR may already be merged (async-verification only starts once fast-gates
+  # is green, which can be after merge if the PR merged on fast-gates alone).
+  async-verification:
+    name: async-verification
+    needs: fast-gates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: habit
+          POSTGRES_PASSWORD: habit_dev_password
+          POSTGRES_DB: habit_tracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - run: uv run alembic upgrade head
+
+      - run: make test-integration
+
+      # Dispatches agent-followup.yml on the default branch, since
+      # workflow_dispatch always resolves the workflow file from `--ref`, not
+      # from this PR's branch. That means this trigger only works once
+      # ci.yml/agent-followup.yml have themselves been merged to main.
+      - name: Trigger agent follow-up
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run agent-followup.yml \
+            --ref main \
+            -f pr_number="${{ github.event.pull_request.number }}"
+
+  # Non-blocking. Placeholder until a real doc-gardener agent exists.
+  doc-freshness:
+    name: doc-freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make lint-docs
