@@ -8,6 +8,10 @@ env:
 
 permissions:
   contents: read
+  # gitleaks-action's PR-scan mode calls GET /pulls/{n}/commits to diff just
+  # the PR's commits -- without this it 403s with "Resource not accessible
+  # by integration".
+  pull-requests: read
 
 jobs:
   # Required status check (see branch protection on main). Keep this fast and
