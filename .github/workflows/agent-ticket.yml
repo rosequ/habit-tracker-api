@@ -1,0 +1,179 @@
+name: Agent Ticket-to-PR
+
+# Fully unattended: an issue labeled agent-ready gets implemented by headless
+# Claude Code and opened as a PR. This job must never merge anything -- the
+# opened PR is always labeled needs-human-review and a human decides whether
+# to merge it, regardless of what checks pass.
+on:
+  issues:
+    types: [labeled]
+
+env:
+  DATABASE_URL: postgresql+asyncpg://habit:habit_dev_password@localhost:5432/habit_tracker
+  ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  implement:
+    if: github.event.label.name == 'agent-ready'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: habit
+          POSTGRES_PASSWORD: habit_dev_password
+          POSTGRES_DB: habit_tracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - run: uv run alembic upgrade head
+
+      - name: Create a working branch
+        run: |
+          branch="agent/issue-${ISSUE_NUMBER}"
+          echo "BRANCH=$branch" >> "$GITHUB_ENV"
+          git checkout -b "$branch"
+          git config user.name "habit-tracker-agent"
+          git config user.email "agent@users.noreply.github.com"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Fetch issue body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue view "$ISSUE_NUMBER" --json title,body \
+            -q '"# " + .title + "\n\n" + (.body // "")' > /tmp/issue.md
+
+      - name: Ask Claude Code to implement the issue
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          issue_spec="$(cat /tmp/issue.md)"
+          agents_md="$(cat AGENTS.md)"
+          api_conventions="$(cat docs/architecture/api-conventions.md)"
+
+          # Unique delimiter, deliberately unquoted so the interpolated
+          # sections expand -- the issue body is untrusted prose and could
+          # contain a bare "EOF" line, which would silently truncate a
+          # common-delimiter heredoc.
+          prompt="$(cat <<TICKET_PROMPT_EOF_5a91
+          You are implementing a GitHub issue end to end, unattended, in a
+          fresh branch off main. Nobody is watching this run in real time --
+          be conservative and follow the repo's existing conventions closely
+          rather than improvising.
+
+          Implement the issue below, following the 5-layer architecture and
+          layering contract in AGENTS.md and docs/architecture/api-conventions.md
+          (routes -> schemas -> services -> repository -> db; only
+          app/repository/ may touch app/db/; no business logic in
+          app/routes/). Write tests for the new behavior (unit tests under
+          tests/, and an integration test under tests/integration/ if the
+          issue adds or changes an HTTP endpoint, following the existing
+          pattern in that directory). Do NOT run git commit, git push, or
+          gh pr create yourself -- the workflow does that after you finish.
+
+          If the issue requires touching auth, billing, data retention, or a
+          new external dependency, or you are not confident your change
+          addresses the issue correctly, stop, leave the working tree
+          unchanged (or reverted), and explain why in your final message
+          instead of guessing.
+
+          === AGENTS.md ===
+          $agents_md
+
+          === docs/architecture/api-conventions.md ===
+          $api_conventions
+
+          === Issue ===
+          $issue_spec
+
+          Once you believe the implementation is complete, run \`make lint\`,
+          \`make test\`, and \`make test-integration\` yourself and fix any
+          failures before finishing. Report their final results in your last
+          message.
+          TICKET_PROMPT_EOF_5a91
+          )"
+
+          claude -p \
+            --model claude-sonnet-5 \
+            --permission-mode bypassPermissions \
+            <<< "$prompt"
+
+      - name: Independently re-verify before opening a PR
+        id: verify
+        continue-on-error: true
+        run: |
+          {
+            echo "### make lint"
+            echo '```'
+            make lint 2>&1 | tee /tmp/lint.log
+            echo '```'
+            echo "### make test"
+            echo '```'
+            make test 2>&1 | tee /tmp/test.log
+            echo '```'
+            echo "### make test-integration"
+            echo '```'
+            make test-integration 2>&1 | tee /tmp/test-integration.log
+            echo '```'
+          } > /tmp/verification.md
+
+      - name: Push branch and open PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No changes produced -- commenting on the issue instead of opening a PR."
+            gh issue comment "$ISSUE_NUMBER" --body "Automated implementation attempt ran but produced no changes. See workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Needs manual attention."
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "Implement issue #$ISSUE_NUMBER (automated)"
+          git push origin "$BRANCH"
+
+          verification="$(cat /tmp/verification.md)"
+          verify_outcome="${{ steps.verify.outcome }}"
+
+          # Unique delimiter -- $verification embeds command output that
+          # could itself contain a bare "EOF" line.
+          body="$(cat <<PR_BODY_EOF_2c48
+          Closes #$ISSUE_NUMBER
+
+          Implemented unattended by \`agent-ticket.yml\` (run $GITHUB_RUN_ID) from the issue's acceptance criteria. This PR has NOT been merged and must not be merged without human review, regardless of check status.
+
+          Independent re-verification after the agent finished (outcome: $verify_outcome):
+
+          $verification
+          PR_BODY_EOF_2c48
+          )"
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "Implement: $(gh issue view "$ISSUE_NUMBER" --json title -q .title) (#$ISSUE_NUMBER)" \
+            --label needs-human-review \
+            --body "$body"
