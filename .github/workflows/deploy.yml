@@ -1,0 +1,19 @@
+name: Deploy
+
+# main is protected and requires the fast-gates check (see branch
+# protection on main), so anything landing here via a normal merge has
+# already passed Phase A's blocking checks. No need to re-gate on a fresh
+# CI run -- a push to main can only happen through a check-passing merge (or
+# an admin bypass, which is out of scope here).
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy
+        run: curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}

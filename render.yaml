@@ -1,0 +1,24 @@
+databases:
+  - name: habit-tracker-db
+    plan: free
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: habit-tracker-api
+    runtime: python
+    plan: free
+    # Auto-deploy is off on purpose: deploys are triggered only by
+    # .github/workflows/deploy.yml, on push to main, so that a deploy can
+    # never happen ahead of/independent of main's required status checks.
+    autoDeploy: false
+    buildCommand: pip install uv && uv sync --frozen
+    startCommand: bash scripts/render_start.sh
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: habit-tracker-db
+          property: connectionString
+      - key: PYTHON_VERSION
+        value: "3.14.0"
