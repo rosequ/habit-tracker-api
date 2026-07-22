@@ -1,4 +1,4 @@
-.PHONY: dev lint lint-docs test test-integration agent-review-local agent-review-cloud
+.PHONY: dev lint lint-docs test test-integration metrics-query agent-review-local agent-review-cloud
 
 dev:
 	uv run uvicorn app.main:app --reload --port $${APP_PORT:-8000}
@@ -18,6 +18,11 @@ test:
 
 test-integration:
 	uv run pytest tests/integration
+
+# Runs a PromQL instant query against the local Prometheus; prints the raw
+# number only. Usage: make metrics-query QUERY='sum(rate(http_requests_total[1m]))'
+metrics-query:
+	@bash scripts/query_metrics.sh '$(QUERY)'
 
 # Fast, cheap pass: lint + a Haiku-powered check that the diff matches Plan.md.
 # Run this first, in a loop, while implementing.

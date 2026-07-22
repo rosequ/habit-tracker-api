@@ -1,0 +1,9 @@
+# Copy to .envrc (gitignored, per-worktree) and run `direnv allow`.
+# Each git worktree should use distinct DB_PORT/APP_PORT/PROMETHEUS_PORT
+# values so multiple worktrees' docker-compose services and dev servers
+# don't collide on the host.
+
+export DB_PORT=5432
+export DATABASE_URL="postgresql+asyncpg://habit:habit_dev_password@localhost:${DB_PORT}/habit_tracker"
+export APP_PORT=8000
+export PROMETHEUS_PORT=9090

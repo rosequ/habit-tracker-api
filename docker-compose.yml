@@ -10,5 +10,32 @@ services:
     volumes:
       - habit_pgdata:/var/lib/postgresql/data
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    extra_hosts:
+      # Lets the container reach the app running on the host (uvicorn isn't
+      # containerized). Native on Docker Desktop; host-gateway is needed for
+      # portability to Linux.
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      # No prometheus.yml is checked in: APP_PORT is per-worktree, and
+      # docker-compose's own ${VAR} substitution resolves it into this
+      # string before the container starts, so the scrape target is baked
+      # in at startup instead of templating a mounted file.
+      - |
+        cat > /etc/prometheus/prometheus.yml <<'PROM_EOF'
+        global:
+          scrape_interval: 5s
+        scrape_configs:
+          - job_name: habit-tracker-api
+            metrics_path: /metrics
+            static_configs:
+              - targets: ["host.docker.internal:${APP_PORT:-8000}"]
+        PROM_EOF
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus
+
 volumes:
   habit_pgdata:

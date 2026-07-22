@@ -30,6 +30,22 @@ Both require a committed `Plan.md` at the repo root, and the `claude` CLI instal
 authenticated separately (they shell out to it). Loop: implement -> `agent-review-local`
 -> fix -> repeat until clean -> `agent-review-cloud` -> address comments -> repeat.
 
+## Observability (local)
+- `/metrics` — Prometheus text-format metrics on the running app, wired
+  directly on `app` like `/health`. `http_requests_total` and
+  `http_request_duration_seconds` are both labeled by `method`, `handler`
+  (route), and `status`.
+- `docker-compose up -d prometheus` — starts a local Prometheus that scrapes
+  `host.docker.internal:$APP_PORT/metrics` (the app itself runs on the host
+  via `make dev`, not in docker-compose). UI at
+  `http://localhost:$PROMETHEUS_PORT` (see `.envrc`'s `PROMETHEUS_PORT`).
+- `make metrics-query QUERY='...'` — runs a PromQL instant query, prints the
+  raw number only (no JSON). Examples:
+  - p95 latency: `make metrics-query QUERY='histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))'`
+  - request rate: `make metrics-query QUERY='sum(rate(http_requests_total[5m]))'`
+  - error rate by status: `make metrics-query QUERY='sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))'`
+- No logging pipeline yet — metrics only. Future work.
+
 ## Escalate to a human when
 - Change touches auth, billing, or data retention
 - Change requires a new external dependency
