@@ -1,130 +1,100 @@
-# Plan: Log a habit completion for a given day (Issue #3)
+# Plan: Fix `make dev` and close the runtime-gating gap it exposed
 
 ## Context
 
-Issue #3 (https://github.com/rosequ/habit-tracker-api/issues/3) asks for
-`POST /habits/{habit_id}/completions` to record that a habit was done on a
-given day. This worktree branches from `origin/main` (PR #2, which already
-merged the Habit model, `POST`/`GET /habits`, and the `/health` +
-out-of-process integration test infrastructure), so that foundation is
-already in place — this plan only adds the completions endpoint on top of
-it, following the existing 5-layer architecture.
+No GitHub issue is linked to this branch — it started as an ad-hoc fix for
+`make dev` crashing, and grew to include a gap it exposed in the review
+tooling added in PR #6 (`agent-review-local` / `agent-review-cloud`,
+documented in `AGENTS.md`).
 
-## Acceptance criteria (from the issue)
+## Part 1 — `make dev` fixes (already committed: 18df950, d872487)
 
-- `POST /habits/{habit_id}/completions` with a date (defaults to today if omitted)
-- Returns 201 + the created completion record
-- Duplicate completion for the same habit + date returns 409 (not a silent upsert)
-- Completion date cannot be in the future — 422 if it is
-- Habit must exist — 404 if `habit_id` is invalid
-- Out of scope: editing/deleting completions, streak calculation
+**Problem:** `make dev` only ran `uvicorn` directly, which had two failures:
+1. `uvicorn` only inherits `.envrc`'s env vars (`DATABASE_URL`, `APP_PORT`,
+   etc.) if the calling shell already had direnv's hook fire for this
+   directory. Any other invocation path (script, editor terminal, fresh
+   shell) skipped that and crashed on startup with a missing `DATABASE_URL`.
+2. It never started `docker-compose` (`db`, `prometheus`), leaving Postgres
+   and Prometheus undiscoverable unless you separately remembered
+   `docker-compose up -d`.
 
-## Existing patterns being reused
+**Fix:**
+- `Makefile`: route the app command through `direnv exec .` so `.envrc` is
+  loaded explicitly regardless of caller shell state, and prepend
+  `docker-compose up -d` so one command brings up db, prometheus, and the
+  app together.
+- `AGENTS.md`: document that `make dev` now brings up docker-compose too.
 
-The codebase already has a full vertical slice for `Habit`
-(`app/db/models.py`, `app/schemas/habits.py`, `app/repository/habits.py`,
-`app/services/habits.py`, `app/routes/habits.py`) enforced by an
-import-linter "layers" contract (`app.routes` → `app.schemas` →
-`app.services` → `app.repository` → `app.db`, higher layers may depend on
-lower ones only) and a 400-line-per-file guard
-(`scripts/check_file_sizes.py`, run via `make lint`). The completions
-feature will add one new file per layer, mirroring `*_habits.py` naming,
-rather than growing the existing habit files.
+## Part 2 — Close the gap these fixes exposed in review gating
 
-Key existing pieces to reuse directly:
-- `app/repository/habits.py::HabitRepository.get_by_id` — used to check the
-  habit exists before recording a completion.
-- `app/db/session.py::get_session` — the `AsyncSession` dependency, same as
-  `HabitRepository`.
-- `tests/integration/conftest.py` — already spins up a real `uvicorn`
-  subprocess (`live_server` fixture) and truncates all `SQLModel.metadata`
-  tables between tests; no changes needed there, just add a new test module.
-- `tests/conftest.py::_clean_habits_table` — needs to also delete rows from
-  the new `completions` table (FK to `habits`) so per-test cleanup doesn't
-  hit a foreign-key violation.
+**Problem:** neither `make dev` fix commit was actually checked by
+`agent-review-local`/`agent-review-cloud` before merging — `Plan.md` at the
+repo root was still the one from an earlier, unrelated feature (Issue #3,
+completions), and `.agent-review/` had no review log for either commit. Two
+runtime bugs surfaced afterward as a result:
+- `make dev` failing with "Address already in use" (a stale uvicorn process
+  from an earlier run was still bound to the port) — invisible to review even
+  in principle, since `agent-review-local` runs with no tools at all and
+  `agent-review-cloud` is read-only (`Read/Glob/Grep`, no `Bash`); neither
+  ever executes anything, so a process-lifecycle bug can't be caught by
+  reading a diff.
+- `make metrics-query` erroring on a multi-series PromQL query — not
+  actually a bug (the script's guard at `scripts/query_metrics.sh:34-41` is
+  intentional), but it highlighted that this repo's gating has no way to
+  distinguish "reviewed and passed" from "never reviewed at all."
 
-## Implementation
+This part of the branch closes both holes: a stale/irrelevant `Plan.md` can
+no longer silently pass unrelated work as "planned," and there's now a cheap
+way to actually *run* the app as part of the fast review loop instead of only
+reading its diff.
 
-**1. Model — `app/db/models.py`**
+**1. `scripts/review_common.sh` — `require_plan` checks relevance, not just existence**
 
-Add a `Completion` SQLModel table:
-- `id: int | None` primary key
-- `habit_id: int` — `ForeignKey("habits.id")`, not null
-- `completion_date: date` — not null
-- `created_at: datetime` — tz-aware, default `datetime.now(timezone.utc)` (same pattern as `Habit.created_at`)
-- `UniqueConstraint("habit_id", "completion_date")` — this is what turns a
-  duplicate insert into a DB-level conflict rather than a silent upsert.
+Previously `require_plan` only checked that some `Plan.md` file exists at the
+repo root. Now it also fails if other tracked or untracked files changed
+since `BASE_REF` (`main`) but `Plan.md` itself didn't — the exact situation
+that let the `make dev` commits merge against a stale, unrelated plan.
 
-**2. Migration — `alembic/versions/`**
+**2. `scripts/smoke_test.sh` + `make smoke`**
 
-Run `alembic revision --autogenerate -m "create completions table"` against
-the local dev Postgres (`DATABASE_URL` from `.envrc`), review the generated
-`create_table` (FK constraint + unique constraint), then `alembic upgrade
-head` to apply it before running tests.
+A new target that actually boots the app the way `make dev` does
+(`docker-compose up -d`, then `direnv exec . uv run uvicorn app.main:app`)
+on `SMOKE_PORT` (default 8098, deliberately separate from `APP_PORT` so it
+doesn't collide with a `make dev` already running in another terminal),
+polls `/health` (which runs a real `SELECT 1` against Postgres) for up to
+20s, then tears the uvicorn process down via a `trap ... EXIT` cleanup.
+Fails loudly if the port's already taken, uvicorn exits early, or `/health`
+never responds — covering exactly the class of bug (env vars, docker-compose
+state, port conflicts) that a text-only diff review structurally cannot see.
 
-**3. Schemas — `app/schemas/completions.py`**
+**3. `scripts/agent_review_local.sh` — wire `make smoke` into the fast gate**
 
-- `CompletionCreate`: `completion_date: date | None = None`
-- `CompletionRead` (`from_attributes=True`): `id`, `habit_id`,
-  `completion_date`, `created_at`
+Runs `make smoke` right after `make lint` and before the Plan.md diff check,
+so the loop you're meant to run repeatedly while implementing
+(`agent-review-local` -> fix -> repeat) now includes a real runtime check,
+not just lint + a text-only scope check.
 
-**4. Repository — `app/repository/completions.py`**
+**4. `AGENTS.md`**
 
-`CompletionRepository.create(habit_id, completion_date)`: insert, commit,
-and catch `sqlalchemy.exc.IntegrityError` from the unique constraint,
-rolling back and raising a repository-level `DuplicateCompletionError`.
-Plus the standard `get_completion_repository` FastAPI dependency.
+Documents `make smoke` and the new `require_plan` behavior under "How to
+verify your work."
 
-**5. Service — `app/services/completions.py`**
+## Out of scope
 
-`CompletionService.create_completion(habit_id, completion_date)`:
-- Resolve `completion_date` to today (UTC) if not supplied.
-- Raise `FutureCompletionDateError` if the resolved date is after today (UTC).
-- Look up the habit via `HabitRepository.get_by_id`; raise
-  `HabitNotFoundError` if missing.
-- Delegate to `CompletionRepository.create`, translating the repository's
-  `DuplicateCompletionError` into a service-level `DuplicateCompletionError`
-  (keeps the repository's SQLAlchemy-flavored exception out of the service/route
-  contract).
-- `get_completion_service` dependency wires both `HabitRepository` and
-  `CompletionRepository`.
-
-**6. Route — `app/routes/habits.py`**
-
-Add `POST /{habit_id}/completions` to the existing `habits` router (same
-file, since it's nested under `/habits` and the file is well under the
-400-line cap). Catch the three service exceptions and map to HTTP status
-codes: `HabitNotFoundError` → 404, `FutureCompletionDateError` → 422
-(`status.HTTP_422_UNPROCESSABLE_CONTENT`, the non-deprecated constant),
-`DuplicateCompletionError` → 409. Return `CompletionRead` with 201 on success.
-
-**7. Tests**
-
-- `tests/test_completions.py` (unit/functional, in-process ASGI client via
-  the existing `client` fixture): happy path with explicit date, default-to-today,
-  duplicate → 409, future date → 422, missing habit → 404.
-- `tests/integration/test_completions_flow.py` (out-of-process, real
-  `uvicorn` subprocess via the `live_server`/`client` fixtures in
-  `tests/integration/conftest.py`): happy path, 409 duplicate, 422 future
-  date (the three cases the task explicitly calls out).
-- Update `tests/conftest.py`'s `_clean_habits_table` fixture to delete
-  `Completion` rows before `Habit` rows (FK ordering).
-
-**8. Plan.md**
-
-Commit this plan as `Plan.md` at the repo root of this worktree, since the
-review infrastructure checks the implementation against it.
+- Actually merging `.githooks/pre-push` (branch `add-pre-push-hook` / PR #11)
+  into `main` — that's a separate, already-tracked piece of work.
+- Server-side branch protection (blocked on issue #7 — private repo on
+  GitHub's Free plan).
+- Any change to `scripts/query_metrics.sh` itself — its multi-series guard
+  is correct as-is; it was misdiagnosed as a bug in conversation before being
+  confirmed as intentional.
 
 ## Verification
 
-1. `make lint` — ruff, import-linter (layered architecture contract still
-   holds — completions files sit at the same layers as habits files), and
-   the file-size guard.
-2. `make test` — in-process unit tests (`tests/test_completions.py` +
-   existing `tests/test_habits.py`).
-3. `make test-integration` — out-of-process tests against a live `uvicorn`
-   subprocess (`tests/integration/test_completions_flow.py` + existing
-   `tests/integration/test_habits_flow.py`), confirming the happy path, 409
-   duplicate, and 422 future-date cases work against a real running server
-   and real Postgres.
-4. Commit the implementation + `Plan.md` in this worktree.
+1. `make lint` — ruff, import-linter, file-size guard (unchanged by this branch).
+2. `make smoke` — confirms the new target itself boots cleanly end-to-end.
+3. Manually confirmed `require_plan` fails against the stale completions-era
+   `Plan.md` (other files changed, `Plan.md` didn't) and passes once
+   `Plan.md` is actually updated.
+4. `make agent-review-local` — now exercises lint + smoke + the corrected
+   plan-relevance check together.

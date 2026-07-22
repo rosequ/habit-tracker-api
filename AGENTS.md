@@ -20,15 +20,28 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 
 ## How to verify your work
 - `make test`  — unit + structural tests
-- `make dev`   — boots the app for this worktree (uses .envrc DB/port namespace)
+- `make dev`   — brings up docker-compose (db, prometheus) and boots the app
+  for this worktree (uses .envrc DB/port namespace)
+- `make smoke` — actually boots the app (docker-compose + uvicorn) on
+  `SMOKE_PORT` (default 8098, separate from `APP_PORT` so it won't collide
+  with a `make dev` you already have running) and hits `/health`, which runs
+  a real `SELECT 1`. Catches runtime crashes -- missing env vars, docker-compose
+  not up, a stale process still bound to the port -- that a text-only diff
+  review can never see, because they only manifest by actually running the
+  command.
 - `make lint`  — ruff + import-linter + file-size check; read the error, it tells you the fix
-- `make agent-review-local` — fast/cheap: lint + flags diff not covered by Plan.md
+- `make agent-review-local` — fast/cheap: lint + smoke + flags diff not covered by Plan.md
 - `make agent-review-cloud` — deeper: an isolated read-only reviewer checks the diff
   against Plan.md and the linked GitHub issue's acceptance criteria
 
-Both require a committed `Plan.md` at the repo root, and the `claude` CLI installed and
-authenticated separately (they shell out to it). Loop: implement -> `agent-review-local`
--> fix -> repeat until clean -> `agent-review-cloud` -> address comments -> repeat.
+Both require a committed `Plan.md` at the repo root that actually describes
+*this* branch's changes -- `require_plan` (in `scripts/review_common.sh`) fails
+if other files changed since `main` but `Plan.md` didn't, so a stale plan left
+over from a previous feature/worktree can't silently rubber-stamp unrelated
+work as "planned." Both also require the `claude` CLI installed and
+authenticated separately (they shell out to it). Loop: implement ->
+`agent-review-local` -> fix -> repeat until clean -> `agent-review-cloud` ->
+address comments -> repeat.
 
 ## Branching
 This is a private repo on GitHub's Free plan, which doesn't support server-side
@@ -43,9 +56,9 @@ mean to). Always work on a branch and open a PR instead.
   directly on `app` like `/health`. `http_requests_total` and
   `http_request_duration_seconds` are both labeled by `method`, `handler`
   (route), and `status`.
-- `docker-compose up -d prometheus` — starts a local Prometheus that scrapes
-  `host.docker.internal:$APP_PORT/metrics` (the app itself runs on the host
-  via `make dev`, not in docker-compose). UI at
+- `make dev` starts a local Prometheus (via docker-compose) that scrapes
+  `host.docker.internal:$APP_PORT/metrics` (the app itself runs on the host,
+  not in docker-compose). UI at
   `http://localhost:$PROMETHEUS_PORT` (see `.envrc`'s `PROMETHEUS_PORT`).
 - `make metrics-query QUERY='...'` — runs a PromQL instant query, prints the
   raw number only (no JSON). Examples:

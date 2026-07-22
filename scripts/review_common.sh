@@ -43,6 +43,27 @@ require_plan() {
         echo "Plan.md not found at repo root. Commit a Plan.md describing this branch's intended changes before running review." >&2
         exit 1
     fi
+
+    # A Plan.md that exists but predates this branch's actual changes (e.g.
+    # left over from a previous worktree/feature) is worse than no plan at
+    # all: the diff-vs-plan check below would silently "pass" this branch's
+    # real changes as unplanned-scope-free just because *some* Plan.md is
+    # sitting at the repo root. Fail loudly if other tracked or untracked
+    # files changed on this branch but Plan.md itself didn't.
+    local merge_base
+    merge_base="$(review_merge_base)"
+
+    local other_tracked_changed=1
+    git diff --quiet "$merge_base" -- . ':(exclude)Plan.md' || other_tracked_changed=0
+
+    local other_untracked
+    other_untracked="$(git ls-files --others --exclude-standard -- . ':(exclude)Plan.md')"
+
+    if { [[ "$other_tracked_changed" -eq 0 ]] || [[ -n "$other_untracked" ]]; } \
+        && git diff --quiet "$merge_base" -- Plan.md; then
+        echo "Plan.md hasn't changed since $BASE_REF, but other files on this branch have. A stale/unrelated Plan.md (e.g. left over from a previous feature) would let review silently pass this branch's actual changes as 'planned' -- update Plan.md to describe what this branch does before running review." >&2
+        exit 1
+    fi
 }
 
 # Resolve the GitHub issue this branch/PR is meant to close: explicit ISSUE
