@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Refuses to push directly to main -- open a PR instead. GitHub branch
+# protection can't enforce this server-side on a private repo on the Free
+# plan (see issue #7), so this is a client-side stopgap: anyone who wants to
+# skip it can still disable/bypass the hook locally or push via the GitHub
+# UI/API. Enable with: git config core.hooksPath .githooks
+set -euo pipefail
+
+if [[ "${ALLOW_PUSH_TO_MAIN:-}" == "1" ]]; then
+    exit 0
+fi
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    if [[ "$remote_ref" == "refs/heads/main" ]]; then
+        echo "Refusing to push directly to main -- open a PR instead." >&2
+        echo "One-time override: ALLOW_PUSH_TO_MAIN=1 git push ..." >&2
+        exit 1
+    fi
+done
+
+exit 0

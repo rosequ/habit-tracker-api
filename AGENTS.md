@@ -30,6 +30,14 @@ Both require a committed `Plan.md` at the repo root, and the `claude` CLI instal
 authenticated separately (they shell out to it). Loop: implement -> `agent-review-local`
 -> fix -> repeat until clean -> `agent-review-cloud` -> address comments -> repeat.
 
+## Branching
+This is a private repo on GitHub's Free plan, which doesn't support server-side
+branch protection at all (see issue #7) -- there is nothing stopping a direct
+`git push` to `main`. As a stopgap, run `git config core.hooksPath .githooks`
+once per clone: it installs a `pre-push` hook that refuses direct pushes to
+`main` (override once with `ALLOW_PUSH_TO_MAIN=1 git push ...` if you really
+mean to). Always work on a branch and open a PR instead.
+
 ## Observability (local)
 - `/metrics` — Prometheus text-format metrics on the running app, wired
   directly on `app` like `/health`. `http_requests_total` and
