@@ -1,6 +1,7 @@
 .PHONY: dev lint lint-docs test test-integration metrics-query agent-review-local agent-review-cloud
 
 dev:
+	docker-compose up -d
 	direnv exec . uv run uvicorn app.main:app --reload --port $${APP_PORT:-8000}
 
 lint:
