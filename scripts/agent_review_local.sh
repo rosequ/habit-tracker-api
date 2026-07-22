@@ -16,6 +16,12 @@ if ! make lint; then
     exit 1
 fi
 
+echo "==> make smoke"
+if ! make smoke; then
+    echo "agent-review-local: FAIL (smoke)" >&2
+    exit 1
+fi
+
 require_plan
 
 diff_content="$(review_full_diff)"

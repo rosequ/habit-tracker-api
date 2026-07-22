@@ -1,8 +1,14 @@
-.PHONY: dev lint lint-docs test test-integration metrics-query agent-review-local agent-review-cloud
+.PHONY: dev smoke lint lint-docs test test-integration metrics-query agent-review-local agent-review-cloud
 
 dev:
 	docker-compose up -d
 	direnv exec . uv run uvicorn app.main:app --reload --port $${APP_PORT:-8000}
+
+# Actually boots the app (docker-compose + uvicorn) and hits /health, then
+# tears down. Catches runtime crashes (missing env vars, port already in
+# use, docker-compose not up) that a text-only diff review can't see.
+smoke:
+	@bash scripts/smoke_test.sh
 
 lint:
 	uv run ruff check .
