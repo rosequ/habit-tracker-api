@@ -31,6 +31,10 @@ permissions:
   actions: write
 
 concurrency:
+  # No cancel-in-progress (defaults to false): this does a non-atomic
+  # git/gh sequence (branch, commit, push, PR, maybe merge) -- queuing a
+  # second run behind an in-flight one is safe; cancelling one mid-sequence
+  # is not.
   group: ${{ github.workflow }}
 
 jobs:
@@ -136,11 +140,32 @@ jobs:
       - name: Check for changes
         id: changes
         run: |
-          if git diff --quiet && git diff --cached --quiet; then
+          # Bare `git diff --name-only` only reports UNSTAGED modifications
+          # to tracked files -- it misses both staged changes (nothing in
+          # the prompt forbids Claude from running `git add`, only `git
+          # commit`/`push`/`pr create`) and brand-new, un-`git add`ed files.
+          # Union in `--cached` and untracked files too, or a fix that
+          # stages a file (or ADDS a new small shared helper) would report
+          # changed=false and get silently discarded, with no PR and no
+          # explanation.
+          changed="$(git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard)"
+          if [[ -z "$changed" ]]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Commit Claude's changes
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          # Commit BEFORE verification/gitleaks below, not after -- both
+          # need a real commit to scope themselves against (git merge-base/
+          # log-opts operate on commits, not the working tree). Committing
+          # this early is exactly what makes those checks meaningful: they
+          # verify what's actually about to become the PR, not a stale,
+          # already-merged range.
+          git add -A
+          git commit -m "[garbage-collector] small architecture tidy-up (run $GITHUB_RUN_ID)"
 
       - name: Inline fast-gates-equivalent verification
         if: steps.changes.outputs.changed == 'true'
@@ -148,53 +173,94 @@ jobs:
         continue-on-error: true
         run: |
           make lint
+          # Nothing in the prompt above forbids touching docs/ -- it's just
+          # scoped to app/ by what it's asked to look for. Run the same
+          # (currently non-emptiness-only) doc check doc-gardener.yml runs,
+          # for consistency, rather than silently having no check here at
+          # all if that scope is ever loosened.
+          make lint-docs
           make test
 
-      - name: gitleaks
+      - name: gitleaks (scoped to this branch's own commit, not full history)
         if: steps.changes.outputs.changed == 'true'
         id: gitleaks
         continue-on-error: true
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # See doc-gardener.yml for why this doesn't use
+          # gitleaks/gitleaks-action@v2 directly: it only scopes its scan to
+          # a commit range for push/pull_request events (confirmed by
+          # reading its source); for workflow_dispatch/schedule (this
+          # workflow's own triggers) it scans this repo's ENTIRE git history
+          # instead, which would fail forever on any pre-existing
+          # secret-shaped string in history, unrelated to this run's diff.
+          # This only works because "Commit Claude's changes" above already
+          # ran -- HEAD is the new commit, not main, by the time this
+          # executes.
+          GITLEAKS_VERSION=8.24.3
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz gitleaks
+          merge_base="$(git merge-base HEAD main)"
+          # `${merge_base}^..HEAD` (with the caret) is NOT "just the commits
+          # this branch adds" -- `A^..B` excludes ancestors of A^, and
+          # merge_base isn't its own ancestor via its parent, so merge_base
+          # ITSELF is included too, over-scanning an already-merged main
+          # commit every run (verified directly -- see doc-gardener.yml).
+          # `A..B` (no caret) is the correct, standard "commits on B not on
+          # A" range.
+          ./gitleaks detect --redact -v --log-opts="--no-merges --first-parent ${merge_base}..HEAD"
 
       - name: Push branch and open PR
         if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git add -A
-          git commit -m "[garbage-collector] small architecture tidy-up (run $GITHUB_RUN_ID)"
           git push origin "$BRANCH"
 
           gh label create garbage-collector --color 5319E7 --description "Opened by garbage-collector.yml" --force
 
-          gh pr create \
+          # See doc-gardener.yml for why this captures the PR number from
+          # `gh pr create`'s own URL output instead of a separate `gh pr
+          # list` lookup.
+          pr_url="$(gh pr create \
             --base main \
             --head "$BRANCH" \
-            --title "garbage-collector: small tidy-up (run $GITHUB_RUN_ID)" \
+            --title "Small architecture tidy-up (run $GITHUB_RUN_ID)" \
             --label garbage-collector \
-            --body "Automated architecture tidy-up by \`garbage-collector.yml\` (run $GITHUB_RUN_ID). Auto-merges only if lint/test/gitleaks pass AND the diff is under 50 changed lines AND it doesn't touch \`.github/workflows/\`, \`alembic/versions/\`, \`uv.lock\`, or \`pyproject.toml\` -- otherwise falls back to \`needs-human-review\`, no exceptions."
+            --body "Automated architecture tidy-up by \`garbage-collector.yml\` (run $GITHUB_RUN_ID). Auto-merges only if lint/test/gitleaks pass AND the diff is under 50 changed lines AND it doesn't touch \`.github/workflows/\`, \`alembic/versions/\`, \`uv.lock\`, or \`pyproject.toml\` -- otherwise falls back to \`needs-human-review\`, no exceptions.")"
+          echo "PR_NUMBER=${pr_url##*/}" >> "$GITHUB_ENV"
 
       - name: Decide merge vs. needs-human-review
         if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pr_number="$(gh pr list --head "$BRANCH" --json number -q '.[0].number')"
+          pr_number="$PR_NUMBER"
 
           verify_passed=true
-          if [[ "${{ steps.verify.outcome }}" != "success" || "${{ steps.gitleaks.outcome }}" != "success" ]]; then
+          failed=()
+          if [[ "${{ steps.verify.outcome }}" != "success" ]]; then
+            failed+=("make lint/make lint-docs/make test")
+          fi
+          if [[ "${{ steps.gitleaks.outcome }}" != "success" ]]; then
+            failed+=("gitleaks")
+          fi
+          if [[ ${#failed[@]} -gt 0 ]]; then
             verify_passed=false
           fi
+          # `"${failed[*]}"` with IFS=', ' only actually joins on the FIRST
+          # character of IFS (a comma, no space) -- printf+strip instead to
+          # get the intended ", "-separated list.
+          joined="$(printf ', %s' "${failed[@]}")"
+          verify_detail="the inline verification failed: ${joined#, }"
 
           bash scripts/gate_and_merge.sh \
             --pr "$pr_number" \
             --verify-passed "$verify_passed" \
+            --verify-detail "$verify_detail" \
             --marker "[garbage-collector]" \
             --max-diff-lines 50 \
             --deny-glob ".github/workflows/*" \
             --deny-glob "alembic/versions/*" \
             --deny-glob "uv.lock" \
             --deny-glob "pyproject.toml" \
+            --deny-glob "docs/quality.md" \
             --redeploy

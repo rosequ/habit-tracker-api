@@ -122,36 +122,87 @@ jobs:
       - name: Enforce scope -- only docs/quality.md may change
         id: scope
         run: |
-          changed="$(git diff --name-only; git ls-files --others --exclude-standard)"
-          if [[ -z "$changed" ]]; then
+          # Bare `git diff --name-only` only reports UNSTAGED modifications
+          # to tracked files -- union in `--cached` and untracked files too,
+          # or a file Claude staged with `git add` would be invisible here.
+          all_changed="$(git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard)"
+          if [[ -z "$all_changed" ]]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [[ "$changed" != "docs/quality.md" ]]; then
-            echo "Claude's diff touched more than docs/quality.md:" >&2
-            echo "$changed" >&2
-            echo "changed=out-of-scope" >> "$GITHUB_OUTPUT"
-            exit 0
+
+          out_of_scope="$(grep -vFx 'docs/quality.md' <<< "$all_changed" || true)"
+
+          if [[ -n "$out_of_scope" ]]; then
+            echo "Claude's diff touched files outside docs/quality.md -- discarding them before commit (this workflow must never ship an app/code diff, even under needs-human-review):" >&2
+            echo "$out_of_scope" >&2
+            while IFS= read -r f; do
+              [[ -z "$f" ]] && continue
+              # Unconditionally unstage first: `git ls-files --error-unmatch`
+              # alone mis-handles a staged deletion (`git rm`) -- the path
+              # is already gone from the index, so it looks like an
+              # untracked/new path and falls into the `rm -f` branch below,
+              # a no-op that leaves the deletion staged and committed later.
+              # Deciding restore-vs-remove by whether the path exists IN
+              # HEAD (not by whether it's in the index right now) handles
+              # staged modifications, staged deletions, and staged/unstaged
+              # new files uniformly, and can't fail on a path HEAD never had
+              # (an earlier version used `git checkout HEAD -- "$f"`
+              # unconditionally for any indexed path, which errors out --
+              # aborting this step under GitHub Actions' default
+              # `bash -eo pipefail` -- for a staged new file, since it has
+              # no HEAD blob to restore from).
+              git reset -q HEAD -- "$f" 2>/dev/null || true
+              if git cat-file -e "HEAD:$f" 2>/dev/null; then
+                git checkout HEAD -- "$f"
+              else
+                rm -f "$f"
+              fi
+            done <<< "$out_of_scope"
+            {
+              echo "out_of_scope<<QUALITY_SCOPE_EOF_8b1a"
+              echo "$out_of_scope"
+              echo "QUALITY_SCOPE_EOF_8b1a"
+            } >> "$GITHUB_OUTPUT"
           fi
-          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          if grep -qFx 'docs/quality.md' <<< "$all_changed"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Push branch and open PR
-        if: steps.scope.outputs.changed != 'false'
+        if: steps.scope.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passed via env, not interpolated as `${{ }}` directly into the
+          # script body: `out_of_scope` is built from file paths an
+          # unattended, bypassPermissions Claude session chose (via `git
+          # diff`/`git ls-files`) -- a path containing a quote, backtick, or
+          # `$(...)` would otherwise break out of the script text at the
+          # point GitHub substitutes `${{ }}` (before bash ever runs it),
+          # executing arbitrary shell with this job's write-scoped token.
+          # `env:` values are passed as data, never re-parsed as script.
+          OUT_OF_SCOPE: ${{ steps.scope.outputs.out_of_scope }}
         run: |
           gh label create needs-human-review --color B60205 --description "Unattended agent output -- requires human review before merge" --force
           gh label create quality-report --color 5A5A5A --description "Opened by quality-grader.yml" --force
 
-          if [[ "${{ steps.scope.outputs.changed }}" == "out-of-scope" ]]; then
-            echo "Refusing to commit -- Claude's diff touched files outside docs/quality.md. Working tree left as-is for investigation; no PR opened."
-            git diff --stat || true
-            exit 1
-          fi
-
           git add docs/quality.md
           git commit -m "[quality-report] monthly code-quality report (run $GITHUB_RUN_ID)"
           git push origin "$BRANCH"
+
+          scope_note=""
+          if [[ -n "$OUT_OF_SCOPE" ]]; then
+            scope_note="
+
+          **Note:** Claude's raw output also touched files outside \`docs/quality.md\` this run -- they were discarded before this commit and never left the runner:
+          \`\`\`
+          $OUT_OF_SCOPE
+          \`\`\`
+          Worth investigating the prompt/tooling even though nothing out-of-scope was shipped."
+          fi
 
           gh pr create \
             --base main \
@@ -159,4 +210,31 @@ jobs:
             --title "quality-report: monthly code-quality report (run $GITHUB_RUN_ID)" \
             --label needs-human-review \
             --label quality-report \
-            --body "Automated monthly code-quality assessment by \`quality-grader.yml\` (run $GITHUB_RUN_ID). This PR has NOT been merged and must not be merged without human review, regardless of check status -- a report generator shouldn't silently rewrite its own audit trail."
+            --body "Automated monthly code-quality assessment by \`quality-grader.yml\` (run $GITHUB_RUN_ID). This PR has NOT been merged and must not be merged without human review, regardless of check status -- a report generator shouldn't silently rewrite its own audit trail.$scope_note"
+
+      # Covers the one case the PR above can't: Claude touched files outside
+      # docs/quality.md but never actually touched docs/quality.md itself, so
+      # there's no report content to commit and open a PR for. Still leave a
+      # visible trail -- an unattended agent touching unexpected files is
+      # worth a human's attention even when nothing merges.
+      - name: File an issue if out-of-scope touch produced no report change
+        if: steps.scope.outputs.changed == 'false' && steps.scope.outputs.out_of_scope != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # See "Push branch and open PR" above for why this is passed via
+          # env and referenced as $OUT_OF_SCOPE, not interpolated directly
+          # into the script as `${{ }}`.
+          OUT_OF_SCOPE: ${{ steps.scope.outputs.out_of_scope }}
+        run: |
+          # Self-contained: don't assume needs-human-review already exists
+          # repo-wide just because the other two workflows happen to create
+          # it too (true today, but this step shouldn't depend on that).
+          gh label create needs-human-review --color B60205 --description "Unattended agent output -- requires human review before merge" --force
+          gh issue create \
+            --title "quality-grader.yml touched out-of-scope files, produced no report (run $GITHUB_RUN_ID)" \
+            --label needs-human-review \
+            --body "Automated run of \`quality-grader.yml\` (run $GITHUB_RUN_ID) touched files outside \`docs/quality.md\` and did not update the report itself. The out-of-scope changes were discarded before anything was committed -- nothing merged or was proposed to merge. Files touched:
+          \`\`\`
+          $OUT_OF_SCOPE
+          \`\`\`
+          Worth investigating the prompt/tooling."

@@ -5,11 +5,21 @@
 # pre-fetch-then-synthesize pattern agent-followup.yml/agent-ticket.yml use
 # for PR diffs and issue bodies). Entirely read-only: no DB needed, only
 # git/gh and the already-installed import-linter.
+#
+# Deliberately best-effort throughout (`|| true` on nearly every git/gh
+# call): this is a monthly report, not a gate -- a transient gh API hiccup
+# should degrade one section to "couldn't fetch this" in the model's input,
+# not fail the whole workflow run. Claude still sees the gap (an empty/error
+# string in its prompt context) and can call it out in the report narrative.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 LAYERS=(routes schemas services repository db)
 
+# Every glob below (`app/$layer/*.py`, `docs/domains/*/README.md`) assumes a
+# flat, one-level directory per layer/domain -- true of this repo today
+# (verified), but it would silently under-count files if any layer ever
+# grows subpackages. Revisit if that happens.
 echo "=== import-linter (uv run lint-imports) ==="
 uv run lint-imports || true
 echo
@@ -24,11 +34,14 @@ echo
 # Doc-freshness mapping: docs/ isn't organized per code-layer today (only
 # docs/architecture/api-conventions.md and docs/domains/*/README.md exist),
 # so this mapping is owned here, in one place, rather than invented by the
-# model each run. routes/schemas are endpoint/field-facing -> the domain
-# READMEs; services/repository/db are business-logic/async/storage
-# conventions, which today live in one shared file -- so those three rows
-# legitimately sharing a freshness date is correct given today's doc
-# structure, not a bug.
+# model each run. It's a simplification, not a precise partition -- e.g.
+# api-conventions.md's "Schemas vs DB models" section and its layering
+# description are just as relevant to routes/schemas as to
+# services/repository/db, which this split doesn't capture. Assigned
+# routes/schemas -> the domain READMEs (endpoint/field-facing) and
+# services/repository/db -> api-conventions.md (business-logic/async/storage
+# conventions) as the more-relevant-in-practice split; revisit if docs/ ever
+# grows a real per-layer structure.
 echo "=== Doc freshness (last [doc-gardener]-tagged commit, or last commit by anyone if none yet) ==="
 freshness_for() {
     local label="$1"; shift
