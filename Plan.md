@@ -1,41 +1,43 @@
-# Plan: Force-push agent/issue-N branches in agent-ticket.yml
+# Plan: Implement GET /habits (issue #19), fixing an incomplete automated attempt
 
 ## Context
 
 Issue #19 ("Add GET /habits to list all habits") was labeled `agent-ready`
-and picked up by `agent-ticket.yml`. The first run failed at the
-"Push branch and open PR" step because the repo's Actions permissions had
-"Allow GitHub Actions to create and approve pull requests" disabled
-(`gh pr create` returned a GraphQL permission error). After that setting
-was enabled and the job was rerun, it failed again at the same step, this
-time with `git push` rejected as non-fast-forward: the first (failed) run
-had already pushed `agent/issue-19` to the remote, and the rerun's fresh
-local branch of the same name no longer matched it.
-
-`agent/issue-N` branches are exclusively created and pushed by this job —
-no human or other workflow ever pushes to them, and a PR only exists
-against one if this same job already succeeded in opening it. A retry
-(manual rerun, or a second `agent-ready` labeling of the same issue) should
-therefore be free to overwrite its own previous attempt instead of failing
-and requiring someone to manually delete the stale remote branch first.
+and picked up by `agent-ticket.yml`. The automated run committed only a
+`HabitRepository.get_all()` method — buggy (`F821 Undefined name 'session'`,
+plus use of the legacy sync SQLAlchemy 1.x `Query` API instead of the async
+`select()` style used elsewhere in this repo) and, more significantly,
+never wired to a route or service, so `GET /habits` didn't actually exist.
+`fast-gates` caught the lint error; manual inspection caught the missing
+route/service/tests once lint was fixed and the PR was reviewed.
 
 ## What this branch changes
 
-**`.github/workflows/agent-ticket.yml`** — the "Push branch and open PR"
-step now runs `git push --force origin "$BRANCH"` instead of a plain
-`git push origin "$BRANCH"`, with a comment explaining why the force-push
-is safe (branch is exclusively owned by this job).
+**`app/repository/habits.py`** — fixed `get_all()` to use
+`select(Habit).order_by(Habit.id.asc())` via `self._session` (not the
+undefined `session`), matching this repo's async 2.0-style SQLAlchemy
+usage.
+
+**`app/services/habits.py`** — added `HabitService.list_habits()`,
+delegating to `repository.get_all()`.
+
+**`app/routes/habits.py`** — added `GET /habits` (`list_habits`),
+`response_model=list[HabitRead]`, calling `service.list_habits()`. No
+auth/pagination/filtering, per the issue's stated scope.
+
+**`tests/test_habits.py`** — two new unit tests: empty list when no habits
+exist, and habits returned in `id` order after creating two.
+
+**`tests/integration/test_habits_flow.py`** — one new integration test:
+empty list, then a created habit appears in the list response.
 
 ## Out of scope
 
-- Deleting old `agent/issue-N` branches after their PR merges or closes —
-  separate cleanup concern, not needed for retries to work.
-- Any change to the PR-creation permission itself (already fixed via repo
-  settings, not code).
+- Pagination, filtering, or sorting query params (per issue #19).
+- Per-user scoping (no auth exists yet).
 
 ## Verification
 
-- Change is a single-line flag addition to an existing, already-exercised
-  `git push` invocation; no new logic paths. Confirmed the line still
-  reads as valid YAML/bash (`bash -n` equivalent by inspection — it's a
-  single-word flag inserted into an existing `run:` block).
+- `make lint` — passes (the `F821` from the automated attempt is fixed).
+- `make test` — all unit tests pass, including the two new ones.
+- `make test-integration` — to be run before push.

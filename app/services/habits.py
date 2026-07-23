@@ -18,6 +18,9 @@ class HabitService:
     async def get_habit(self, habit_id: int) -> Habit | None:
         return await self._repository.get_by_id(habit_id)
 
+    async def list_habits(self) -> list[Habit]:
+        return await self._repository.get_all()
+
 
 def get_habit_service(
     repository: Annotated[HabitRepository, Depends(get_habit_repository)],

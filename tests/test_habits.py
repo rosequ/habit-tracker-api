@@ -34,3 +34,28 @@ async def test_get_missing_habit_returns_404(client: AsyncClient) -> None:
     response = await client.get("/habits/999999")
 
     assert response.status_code == 404
+
+
+async def test_list_habits_returns_empty_list_when_none_exist(client: AsyncClient) -> None:
+    response = await client.get("/habits")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_list_habits_returns_all_habits_ordered_by_id(client: AsyncClient) -> None:
+    first = await client.post(
+        "/habits", json={"name": "Read", "daily_target": 10, "category": "Learning"}
+    )
+    second = await client.post(
+        "/habits", json={"name": "Run", "daily_target": 1, "category": "Fitness"}
+    )
+
+    response = await client.get("/habits")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [habit["id"] for habit in body] == [
+        first.json()["id"],
+        second.json()["id"],
+    ]

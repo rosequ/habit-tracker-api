@@ -29,6 +29,14 @@ async def create_habit(
     return HabitRead.model_validate(habit)
 
 
+@router.get("", response_model=list[HabitRead])
+async def list_habits(
+    service: Annotated[HabitService, Depends(get_habit_service)],
+) -> list[HabitRead]:
+    habits = await service.list_habits()
+    return [HabitRead.model_validate(habit) for habit in habits]
+
+
 @router.get("/{habit_id}", response_model=HabitRead)
 async def get_habit(
     habit_id: int,
