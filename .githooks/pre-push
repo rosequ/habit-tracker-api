@@ -1,21 +1,77 @@
 #!/usr/bin/env bash
-# Refuses to push directly to main -- open a PR instead. GitHub branch
-# protection can't enforce this server-side on a private repo on the Free
-# plan (see issue #7), so this is a client-side stopgap: anyone who wants to
-# skip it can still disable/bypass the hook locally or push via the GitHub
-# UI/API. Enable with: git config core.hooksPath .githooks
+# 1. Refuses to push directly to main -- open a PR instead. GitHub branch
+#    protection can't enforce this server-side on a private repo on the Free
+#    plan (see issue #7), so this is a client-side stopgap: anyone who wants
+#    to skip it can still disable/bypass the hook locally or push via the
+#    GitHub UI/API. Override once with: ALLOW_PUSH_TO_MAIN=1 git push ...
+#
+# 2. Refuses to push ANY branch -- not just main -- unless `make lint`,
+#    `make test`, and `make agent-review-local` (lint + smoke + a check that
+#    the diff is covered by Plan.md) all pass. This is the actual "does this
+#    push meet the bar documented in AGENTS.md" gate, applied at the one
+#    point client-side tooling can still catch it before work leaves this
+#    machine: nothing here is server-side enforced (same root cause as the
+#    main-push block above), so it's still bypassable the same way.
+#    `make agent-review-cloud` (the deeper, slower, costlier reviewer
+#    subagent pass) is deliberately NOT run here -- it's meant to run once,
+#    deliberately, before asking a human to review a PR, not on every push
+#    of routine WIP work. Override once with:
+#    SKIP_PUSH_VERIFICATION=1 git push ...
+#
+# Enable both hooks with: git config core.hooksPath .githooks
 set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
 
-if [[ "${ALLOW_PUSH_TO_MAIN:-}" == "1" ]]; then
+ZERO_SHA="0000000000000000000000000000000000000000"
+any_non_delete_ref=0
+
+if [[ "${ALLOW_PUSH_TO_MAIN:-}" != "1" ]]; then
+    while read -r local_ref local_sha remote_ref remote_sha; do
+        if [[ "$remote_ref" == "refs/heads/main" ]]; then
+            echo "Refusing to push directly to main -- open a PR instead." >&2
+            echo "One-time override: ALLOW_PUSH_TO_MAIN=1 git push ..." >&2
+            exit 1
+        fi
+        if [[ "$local_sha" != "$ZERO_SHA" ]]; then
+            any_non_delete_ref=1
+        fi
+    done
+else
+    # Still need to know whether this push is a pure branch deletion (to
+    # decide whether verification below applies), even though the main-push
+    # block itself is overridden.
+    while read -r local_ref local_sha remote_ref remote_sha; do
+        if [[ "$local_sha" != "$ZERO_SHA" ]]; then
+            any_non_delete_ref=1
+        fi
+    done
+fi
+
+if [[ "$any_non_delete_ref" -eq 0 ]]; then
+    # Every ref in this push is a deletion (e.g. `git push origin --delete
+    # some-branch`) -- nothing to lint/test/review.
     exit 0
 fi
 
-while read -r local_ref local_sha remote_ref remote_sha; do
-    if [[ "$remote_ref" == "refs/heads/main" ]]; then
-        echo "Refusing to push directly to main -- open a PR instead." >&2
-        echo "One-time override: ALLOW_PUSH_TO_MAIN=1 git push ..." >&2
-        exit 1
-    fi
-done
+if [[ "${SKIP_PUSH_VERIFICATION:-}" == "1" ]]; then
+    exit 0
+fi
+
+echo "pre-push: running make lint / make test / make agent-review-local before allowing this push..." >&2
+
+if ! make lint; then
+    echo "Refusing to push -- make lint failed. Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
+    exit 1
+fi
+
+if ! make test; then
+    echo "Refusing to push -- make test failed. Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
+    exit 1
+fi
+
+if ! make agent-review-local; then
+    echo "Refusing to push -- make agent-review-local failed (lint/smoke/Plan.md-coverage). Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
+    exit 1
+fi
 
 exit 0

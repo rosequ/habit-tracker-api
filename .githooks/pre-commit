@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Refuses to commit if `make lint` fails (ruff + import-linter + file-size --
+# all static, no DB/network needed, so this stays fast enough to run on
+# every commit without annoying friction). The heavier gate (tests, the
+# agent-review-local loop) lives in the pre-push hook instead, since that
+# fires far less often than individual commits. Enable both hooks together
+# with: git config core.hooksPath .githooks
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+if [[ "${SKIP_COMMIT_LINT:-}" == "1" ]]; then
+    exit 0
+fi
+
+if ! make lint; then
+    echo "Refusing to commit -- make lint failed. Fix it, or override once with SKIP_COMMIT_LINT=1 git commit ..." >&2
+    exit 1
+fi
+
+exit 0
