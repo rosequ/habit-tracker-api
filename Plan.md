@@ -53,6 +53,31 @@ meet a baseline," not `agent-review-cloud`.
   client-side stopgap `.githooks/pre-push` already is for the main-push
   block, just widened to cover pushing any branch.
 
+## Fixes made after `agent-review-cloud`
+
+Round 1 caught one real, blocking gap and several smaller ones, all
+applied:
+- **`AGENTS.md` was never updated.** This whole branch's point is making
+  the review loop actually happen instead of staying pure convention, and
+  the one doc that tells a contributor what `git config core.hooksPath
+  .githooks` does was left describing only the old main-push-only
+  behavior. Fixed: "Branching" now documents both hooks, their overrides,
+  and the changed semantics below.
+- `pre-commit`'s comment overclaimed why it unsets `GIT_DIR`/etc.: `make
+  lint` never runs pytest, so it was never actually exposed to the
+  corruption reproduced in `pre-push`'s verification section. Fixed the
+  comment to say so plainly and frame the unset there as consistency/
+  defense-in-depth, not an active fix for a reachable bug.
+- `ALLOW_PUSH_TO_MAIN=1` silently changed meaning: it used to short-circuit
+  the entire old hook, now it only bypasses the main-push block specifically
+  -- the lint/test/review gate still applies unless `SKIP_PUSH_VERIFICATION=1`
+  is also set. Called this out explicitly in both `AGENTS.md` and the
+  hook's own header comment, for anyone with muscle memory for the old flag.
+- The verification gate doesn't distinguish branches from tags (anything
+  with a non-zero local SHA triggers it) -- noted explicitly as intentional-
+  by-default rather than an unconsidered gap, since this repo doesn't
+  currently tag releases.
+
 ## Verification
 
 1. Tested directly in an isolated `git worktree` off `main`

@@ -11,15 +11,15 @@ cd "$(git rev-parse --show-toplevel)"
 # Git sets GIT_DIR (and can set GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR)
 # in a hook's environment when the hook runs inside a git worktree (it does
 # NOT do this for a plain, non-worktree repo -- confirmed directly). Any
-# subprocess this hook spawns inherits that environment by default,
-# including `make lint` -> anything that itself shells out to `git` in an
-# isolated temp directory (e.g. tests/test_check_file_sizes.py's own `git
-# init`/`git add` in a pytest tmp_path). Without unsetting these first, that
-# "isolated" git repo silently isn't isolated at all -- its git commands
-# resolve against THIS worktree's real gitdir/index instead of the tmp
-# directory, corrupting the real index. Confirmed this happens by
-# reproducing it directly. Same class of fix as scripts/review_common.sh's
-# unset of CLAUDE_CODE_SESSION_ID/CLAUDE_CODE_CHILD_SESSION.
+# subprocess this hook spawns inherits that by default. `make lint` itself
+# doesn't run pytest (ruff + import-linter + scripts/check_file_sizes.py
+# only, all direct against the real repo), so it isn't actually exposed to
+# the specific corruption this caused in pre-push (see that hook's comment
+# for the reproduced failure: `make test` -> pytest ->
+# tests/test_check_file_sizes.py's own "isolated" `git init`/`git add` in a
+# pytest tmp_path, which isn't isolated at all if GIT_DIR leaks in). Unset
+# here too anyway, for consistency and so this stays safe if `make lint`
+# ever grows a dependency that shells out to git the same way.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
 
 if [[ "${SKIP_COMMIT_LINT:-}" == "1" ]]; then

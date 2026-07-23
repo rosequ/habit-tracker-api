@@ -5,18 +5,28 @@
 #    to skip it can still disable/bypass the hook locally or push via the
 #    GitHub UI/API. Override once with: ALLOW_PUSH_TO_MAIN=1 git push ...
 #
-# 2. Refuses to push ANY branch -- not just main -- unless `make lint`,
-#    `make test`, and `make agent-review-local` (lint + smoke + a check that
-#    the diff is covered by Plan.md) all pass. This is the actual "does this
-#    push meet the bar documented in AGENTS.md" gate, applied at the one
-#    point client-side tooling can still catch it before work leaves this
-#    machine: nothing here is server-side enforced (same root cause as the
-#    main-push block above), so it's still bypassable the same way.
-#    `make agent-review-cloud` (the deeper, slower, costlier reviewer
-#    subagent pass) is deliberately NOT run here -- it's meant to run once,
-#    deliberately, before asking a human to review a PR, not on every push
-#    of routine WIP work. Override once with:
+# 2. Refuses to push ANY ref -- not just a main branch, and not just
+#    branches (a tag push hits this too, since it only cares whether a
+#    ref's local SHA is non-zero, i.e. not a pure deletion) -- unless `make
+#    lint`, `make test`, and `make agent-review-local` (lint + smoke + a
+#    check that the diff is covered by Plan.md) all pass. This is the
+#    actual "does this push meet the bar documented in AGENTS.md" gate,
+#    applied at the one point client-side tooling can still catch it before
+#    work leaves this machine: nothing here is server-side enforced (same
+#    root cause as the main-push block above), so it's still bypassable the
+#    same way. `make agent-review-cloud` (the deeper, slower, costlier
+#    reviewer subagent pass) is deliberately NOT run here -- it's meant to
+#    run once, deliberately, before asking a human to review a PR, not on
+#    every push of routine WIP work. Override once with:
 #    SKIP_PUSH_VERIFICATION=1 git push ...
+#
+# NOTE on a semantic change to an existing flag: previously
+# ALLOW_PUSH_TO_MAIN=1 short-circuited this ENTIRE hook (exit 0
+# immediately). Now it only bypasses check #1 (the main-push block) --
+# check #2 above still runs and can still refuse the push unless
+# SKIP_PUSH_VERIFICATION=1 is ALSO set. If you have muscle memory for
+# ALLOW_PUSH_TO_MAIN=1 meaning "let me push, no questions asked," it no
+# longer does.
 #
 # Enable both hooks with: git config core.hooksPath .githooks
 set -euo pipefail

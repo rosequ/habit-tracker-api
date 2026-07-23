@@ -46,10 +46,29 @@ address comments -> repeat.
 ## Branching
 This is a private repo on GitHub's Free plan, which doesn't support server-side
 branch protection at all (see issue #7) -- there is nothing stopping a direct
-`git push` to `main`. As a stopgap, run `git config core.hooksPath .githooks`
-once per clone: it installs a `pre-push` hook that refuses direct pushes to
-`main` (override once with `ALLOW_PUSH_TO_MAIN=1 git push ...` if you really
-mean to). Always work on a branch and open a PR instead.
+`git push` to `main`, or a push of any branch that skips lint/tests/review.
+As a stopgap, run `git config core.hooksPath .githooks` once per clone: it
+installs two client-side hooks (still bypassable locally -- `--no-verify`,
+or just not enabling `core.hooksPath` -- same limitation as the branch
+protection gap above):
+- `pre-commit` — refuses to commit if `make lint` fails. Override once with
+  `SKIP_COMMIT_LINT=1 git commit ...`.
+- `pre-push` — refuses to push directly to `main` (override once with
+  `ALLOW_PUSH_TO_MAIN=1 git push ...` if you really mean to; only bypasses
+  the main-push block, not the check below). Separately, refuses to push
+  **any** branch unless `make lint`, `make test`, and
+  `make agent-review-local` all pass first (a pure branch deletion is
+  exempt -- nothing to check). This runs on every push, including small WIP
+  ones -- it boots Postgres via docker-compose, a real `uvicorn` process,
+  and a `claude -p` call, so expect it to take a while and to need the
+  `claude` CLI installed/authenticated. Override once with
+  `SKIP_PUSH_VERIFICATION=1 git push ...`. Pushing a tag hits this same
+  gate (anything with a non-zero local SHA does), not just branches.
+  `make agent-review-cloud` deliberately is NOT part of this gate -- it's
+  meant to run once, deliberately, before asking a human to review a PR,
+  not on every push of routine work.
+
+Always work on a branch and open a PR instead of pushing to `main` directly.
 
 ## Observability (local)
 - `/metrics` — Prometheus text-format metrics on the running app, wired
