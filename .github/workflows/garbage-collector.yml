@@ -23,6 +23,16 @@ on:
 env:
   DATABASE_URL: postgresql+asyncpg://habit:habit_dev_password@localhost:5432/habit_tracker
   APP_PORT: 8000
+  # Provider dispatch for scripts/run_agent.sh -- see #15. Deliberately reads
+  # a DIFFERENT repository variable than the other four call sites
+  # (vars.AGENT_PROVIDER): this workflow can auto-merge to main on nothing
+  # but a syntax/scope-level gate (see AGENTS.md), so flipping the general
+  # AGENT_PROVIDER variable must never silently change what this workflow
+  # runs. Requires deliberately setting AGENT_PROVIDER_AUTOMERGE -- a real
+  # side-by-side quality comparison first (see
+  # docs/architecture/agent-providers.md) -- not just flipping the same
+  # switch used everywhere else.
+  AGENT_PROVIDER: ${{ vars.AGENT_PROVIDER_AUTOMERGE || 'claude' }}
 
 permissions:
   contents: write
@@ -76,12 +86,10 @@ jobs:
           git config user.name "habit-tracker-agent"
           git config user.email "agent@users.noreply.github.com"
 
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
-
-      - name: Ask Claude Code to find and fix one small tidy-up
+      - name: Ask the agent to find and fix one small tidy-up
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           agents_md="$(cat AGENTS.md)"
           api_conventions="$(cat docs/architecture/api-conventions.md)"
@@ -132,10 +140,7 @@ jobs:
           GARBAGECOLLECTOR_PROMPT_EOF_6b2d
           )"
 
-          claude -p \
-            --model claude-sonnet-5 \
-            --permission-mode bypassPermissions \
-            <<< "$prompt"
+          bash scripts/run_agent.sh <<< "$prompt"
 
       - name: Check for changes
         id: changes

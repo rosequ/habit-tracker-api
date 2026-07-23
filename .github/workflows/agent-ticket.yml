@@ -14,6 +14,9 @@ env:
   # APP_PORT + 1000, same convention as .envrc locally.
   APP_PORT: 8000
   ISSUE_NUMBER: ${{ github.event.issue.number }}
+  # Provider dispatch for scripts/run_agent.sh -- see #15. Defaults to
+  # 'claude' (today's behavior) whenever the repo variable isn't set.
+  AGENT_PROVIDER: ${{ vars.AGENT_PROVIDER || 'claude' }}
 
 permissions:
   contents: write
@@ -60,9 +63,6 @@ jobs:
           git config user.name "habit-tracker-agent"
           git config user.email "agent@users.noreply.github.com"
 
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
-
       - name: Fetch issue body
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -70,9 +70,10 @@ jobs:
           gh issue view "$ISSUE_NUMBER" --json title,body \
             -q '"# " + .title + "\n\n" + (.body // "")' > /tmp/issue.md
 
-      - name: Ask Claude Code to implement the issue
+      - name: Ask the agent to implement the issue
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           issue_spec="$(cat /tmp/issue.md)"
           agents_md="$(cat AGENTS.md)"
@@ -120,10 +121,7 @@ jobs:
           TICKET_PROMPT_EOF_5a91
           )"
 
-          claude -p \
-            --model claude-sonnet-5 \
-            --permission-mode bypassPermissions \
-            <<< "$prompt"
+          bash scripts/run_agent.sh <<< "$prompt"
 
       - name: Independently re-verify before opening a PR
         id: verify

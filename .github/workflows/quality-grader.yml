@@ -18,6 +18,11 @@ on:
     - cron: "0 8 1 * *"
   workflow_dispatch:
 
+env:
+  # Provider dispatch for scripts/run_agent.sh -- see #15. Defaults to
+  # 'claude' (today's behavior) whenever the repo variable isn't set.
+  AGENT_PROVIDER: ${{ vars.AGENT_PROVIDER || 'claude' }}
+
 permissions:
   contents: write
   pull-requests: write
@@ -51,17 +56,15 @@ jobs:
           git config user.name "habit-tracker-agent"
           git config user.email "agent@users.noreply.github.com"
 
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
-
       - name: Gather ground-truth data
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/quality_report_data.sh > /tmp/quality-data.txt
 
-      - name: Ask Claude Code to write docs/quality.md
+      - name: Ask the agent to write docs/quality.md
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           agents_md="$(cat AGENTS.md)"
           quality_data="$(cat /tmp/quality-data.txt)"
@@ -114,10 +117,7 @@ jobs:
           QUALITYGRADER_PROMPT_EOF_3d7c
           )"
 
-          claude -p \
-            --model claude-sonnet-5 \
-            --permission-mode bypassPermissions \
-            <<< "$prompt"
+          bash scripts/run_agent.sh <<< "$prompt"
 
       - name: Enforce scope -- only docs/quality.md may change
         id: scope

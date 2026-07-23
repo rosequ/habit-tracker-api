@@ -38,8 +38,10 @@ Both require a committed `Plan.md` at the repo root that actually describes
 *this* branch's changes -- `require_plan` (in `scripts/review_common.sh`) fails
 if other files changed since `main` but `Plan.md` didn't, so a stale plan left
 over from a previous feature/worktree can't silently rubber-stamp unrelated
-work as "planned." Both also require the `claude` CLI installed and
-authenticated separately (they shell out to it). Loop: implement ->
+work as "planned." Both also require the agent CLI for whichever
+`AGENT_PROVIDER` is active installed and authenticated separately (they
+shell out to it via `scripts/run_agent.sh` -- see
+`docs/architecture/agent-providers.md`). Loop: implement ->
 `agent-review-local` -> fix -> repeat until clean -> `agent-review-cloud` ->
 address comments -> repeat.
 
@@ -92,6 +94,18 @@ Always work on a branch and open a PR instead of pushing to `main` directly.
 - You are not confident the fix addresses the root cause
 
 ## CI/CD (.github/workflows/)
+- Every workflow below that runs a headless agent, plus
+  `agent-review-local`/`agent-review-cloud`, goes through
+  `scripts/run_agent.sh` rather than calling `claude -p` directly. Two
+  separate repository variables pick the backend (both default `claude`):
+  `AGENT_PROVIDER` for the three workflows that never auto-merge
+  (`agent-ticket.yml`, `agent-followup.yml`, `quality-grader.yml`), and
+  `AGENT_PROVIDER_AUTOMERGE` -- deliberately distinct, not a fallback of the
+  first -- for the two that can (`doc-gardener.yml`, `garbage-collector.yml`),
+  so flipping the general variable can never silently change what an
+  auto-merge-capable workflow runs. See `docs/architecture/agent-providers.md`
+  for the North Mini Code (Cohere, via OpenCode/OpenRouter) alternative and
+  what's still unverified about it.
 - `ci.yml` — on every PR: `fast-gates` (lint, test, gitleaks secret scan) is
   the required check that blocks merge. `async-verification` runs
   `make test-integration` after `fast-gates` but is non-blocking, and on

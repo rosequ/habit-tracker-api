@@ -62,15 +62,13 @@ RESULT: FAIL
 LOCAL_PROMPT_EOF_4c1b
 )"
 
-echo "==> Checking diff against Plan.md with $LOCAL_MODEL"
+echo "==> Checking diff against Plan.md with $LOCAL_MODEL (provider: ${AGENT_PROVIDER:-claude})"
 # No --continue/--resume/--session-id: every run is a brand-new session with
 # no memory of prior runs. --tools "" strips all tools, so this call has no
 # write access (or any tool access at all) -- it can only read the prompt and
-# respond with text.
-output="$(claude -p \
-    --model "$LOCAL_MODEL" \
+# respond with text. See scripts/run_agent.sh for provider dispatch (#15).
+output="$(CLAUDE_MODEL="$LOCAL_MODEL" bash scripts/run_agent.sh \
     --tools "" \
-    --permission-mode bypassPermissions \
     <<< "$prompt")"
 
 echo "$output"
