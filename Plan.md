@@ -28,12 +28,17 @@ in code comments.
 `doc-gardener.yml`, `garbage-collector.yml`, `quality-grader.yml`) — each
 drops its standalone "Install Claude Code" step (now lazy-installed inside
 `run_agent.sh`), replaces its `claude -p ...` invocation with
-`bash scripts/run_agent.sh <<< "$prompt"`, adds an `AGENT_PROVIDER: ${{
-vars.AGENT_PROVIDER || 'claude' }}` env var (repository variable, works
-uniformly across `schedule`/`issues`/`workflow_dispatch` triggers, unlike a
-workflow input), and adds `OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY
-}}` alongside the existing `ANTHROPIC_API_KEY` env (empty/unused whenever
-the provider stays `claude`).
+`bash scripts/run_agent.sh <<< "$prompt"`, and adds
+`OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}` alongside the
+existing `ANTHROPIC_API_KEY` env (empty/unused whenever the provider stays
+`claude`). The `AGENT_PROVIDER` env var they set is deliberately **not**
+the same repository variable everywhere (see "Fixes made after
+agent-review-cloud" below): `agent-ticket.yml`/`agent-followup.yml`/
+`quality-grader.yml` read `vars.AGENT_PROVIDER`; `doc-gardener.yml`/
+`garbage-collector.yml` read `vars.AGENT_PROVIDER_AUTOMERGE` instead. Both
+default to `claude` whenever unset. Repository variables (not a
+`workflow_dispatch` input) because they need to work uniformly across
+`schedule`/`issues`/`workflow_dispatch` triggers.
 
 **3. `scripts/agent_review_local.sh` / `scripts/agent_review_cloud.sh`** —
 same swap: `claude -p --model ... --tools ... <<< "$prompt"` becomes
@@ -47,17 +52,34 @@ the same way locally as flipping the repository variable does in CI.
 whichever `AGENT_PROVIDER` is active" instead of hardcoding "the `claude`
 CLI."
 
+## Fixes made after `agent-review-cloud`
+
+Round 1 (`REQUEST_CHANGES`) caught one real, blocking gap: every one of the
+five workflows read the *same* `vars.AGENT_PROVIDER`, so there was no way
+to move the three non-auto-merging workflows to `north` while keeping
+`doc-gardener.yml`/`garbage-collector.yml` on `claude` — flipping the one
+shared variable would flip all five simultaneously, directly contradicting
+the "don't flip this without a real comparison first" comments already
+sitting in those two workflows. Fixed by splitting into two independent
+repository variables (see "What this branch adds" above):
+`AGENT_PROVIDER_AUTOMERGE`, read only by the two auto-merge-capable
+workflows, is a distinct variable rather than a fallback/override of the
+general one, so a repo-wide flip of `AGENT_PROVIDER` can never silently
+change what they run. `docs/architecture/agent-providers.md` and
+`AGENTS.md` updated to describe both variables and the reasoning for
+keeping them separate.
+
 ## Out of scope
 
-- Flipping `AGENT_PROVIDER` was deliberately left out of this diff itself —
-  this branch's code changes leave every workflow defaulting to `claude`
-  whenever the repository variable is unset. Since this PR was opened, the
-  `AGENT_PROVIDER` repository variable has separately been set to `north`
-  by explicit request (a GitHub Actions setting, not part of this diff or
-  the repo's tracked files) — see the PR description for that decision and
-  its risk tradeoff, since it now governs `doc-gardener.yml`/
-  `garbage-collector.yml`'s auto-merge behavior on a still-unverified
-  provider.
+- Actually setting either repository variable to `north` — this branch's
+  code changes leave every workflow defaulting to `claude` whenever its
+  variable is unset. `AGENT_PROVIDER` (the non-auto-merge one) was
+  separately set to `north` by explicit request before this gap was found;
+  see the PR description for that decision. `AGENT_PROVIDER_AUTOMERGE` has
+  deliberately not been set by this branch — that's a separate decision for
+  whoever wants `doc-gardener.yml`/`garbage-collector.yml` on `north`, made
+  with this PR's fix in place rather than the single-variable design that
+  couldn't express it safely.
 - The Kimi K* swap proposed in #10 — `run_agent.sh`'s dispatch is generic
   enough that a third provider branch should follow the same shape later,
   but isn't added here.

@@ -5,7 +5,25 @@ that run a headless agent (`agent-ticket.yml`, `agent-followup.yml`,
 `doc-gardener.yml`, `garbage-collector.yml`, `quality-grader.yml`) plus the
 two local review scripts (`agent_review_local.sh`, `agent_review_cloud.sh`)
 — pipes its prompt into `scripts/run_agent.sh` on stdin instead of calling
-`claude -p` directly. `AGENT_PROVIDER` picks the backend in that one place.
+`claude -p` directly. An `AGENT_PROVIDER` env var picks the backend in that
+one place.
+
+**Two separate repository variables feed it, not one:**
+- `vars.AGENT_PROVIDER` — read by `agent-ticket.yml`, `agent-followup.yml`,
+  and `quality-grader.yml`. None of these three ever auto-merge (every PR
+  they open is labeled `needs-human-review`), so a bad or low-quality
+  response from an experimental provider is caught by a human before it can
+  land anywhere.
+- `vars.AGENT_PROVIDER_AUTOMERGE` — read *only* by `doc-gardener.yml` and
+  `garbage-collector.yml`, the two workflows that can merge their own PRs
+  to `main` with no human in the loop, gated by nothing more than a
+  syntax/scope-level check (lint, non-empty-docs, path/size limits -- see
+  `AGENTS.md`). Deliberately a different variable, not a fallback/override
+  of the first one: flipping the general `AGENT_PROVIDER` variable must
+  never silently change what these two auto-merge-capable workflows run.
+  Setting this one is a separate, deliberate decision.
+
+Both default to `claude` (today's behavior) whenever unset.
 
 ## `AGENT_PROVIDER=claude` (default)
 
@@ -58,9 +76,10 @@ real OpenCode + OpenRouter run — see "What's unverified" below.
 
 None of the `north` path has been exercised end-to-end — no Cohere/
 OpenRouter account, no OpenCode install available while building this. Before
-trusting this provider anywhere, in particular before pointing
-`AGENT_PROVIDER=north` at `doc-gardener.yml` or `garbage-collector.yml` (the
-two workflows that can auto-merge on their own), confirm:
+trusting this provider anywhere, in particular before setting
+`AGENT_PROVIDER_AUTOMERGE=north` for `doc-gardener.yml`/
+`garbage-collector.yml` (the two workflows that can auto-merge on their
+own), confirm:
 
 1. `opencode run --model openrouter/cohere/north-mini-code:free "hello"`
    actually returns a completion with a real `OPENROUTER_API_KEY`.
@@ -75,13 +94,24 @@ two workflows that can auto-merge on their own), confirm:
 
 ## How to compare
 
-Set the `AGENT_PROVIDER` repository variable to `north` (Settings ->
-Secrets and variables -> Actions -> Variables), add an `OPENROUTER_API_KEY`
-repository secret, and manually `workflow_dispatch` one of the workflows
-against a real issue/PR. Set the variable back to `claude` (or delete it)
-to fall back to today's behavior. Locally, prefix a single invocation
-instead of changing the repo-wide default: `AGENT_PROVIDER=north make
-agent-review-local`.
+Add an `OPENROUTER_API_KEY` repository secret first (Settings -> Secrets and
+variables -> Actions -> Secrets) -- every path below hard-fails immediately
+and loudly without it. Then:
+
+- For `agent-ticket.yml`/`agent-followup.yml`/`quality-grader.yml`: set the
+  `AGENT_PROVIDER` repository variable to `north` (same page, Variables tab)
+  and manually `workflow_dispatch` one of them against a real issue/PR, or
+  wait for the next natural trigger. Set it back to `claude` (or delete it)
+  to fall back to today's behavior.
+- For `doc-gardener.yml`/`garbage-collector.yml`: set
+  `AGENT_PROVIDER_AUTOMERGE` to `north` instead -- a separate, deliberate
+  step from the one above, precisely because these two can auto-merge.
+  Don't do this until the "what's unverified" items above have real
+  answers, and ideally not until you've watched at least one real
+  `AGENT_PROVIDER=north` run of the non-auto-merge workflows first.
+
+Locally, prefix a single invocation instead of changing either repo-wide
+default: `AGENT_PROVIDER=north make agent-review-local`.
 
 ## Related
 
