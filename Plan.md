@@ -59,6 +59,16 @@ existing `pre-commit`/`pre-push` description.
 - Enforcing true edit-order (plan content written before code content) —
   not observable from git state at all; out of reach for any hook.
 
+## Fixes made after `agent-review-cloud`
+
+`APPROVE`, no blocking issues -- the reviewer manually traced all three
+scenarios in the "Verification" section below against `require_plan_staged`
+and confirmed they hold. Two trivial, purely cosmetic suggestions applied
+anyway: a comment clarifying `other_changed`'s inverted-boolean convention
+(`git diff --quiet` exits 0 on *no* difference), and a one-line note that
+the merge-commit edge case already latent in `require_plan()` is more
+likely to surface now that this runs on every commit, not just at push.
+
 ## Verification
 
 1. Exercised directly in an isolated scratch git repo (a throwaway repo

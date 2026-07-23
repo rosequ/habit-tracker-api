@@ -77,6 +77,12 @@ require_plan() {
 # never been touched on this branch at all, not merely in this one commit --
 # so a first commit that adds Plan.md, followed by later commits that
 # implement it, passes every one of those later commits too.
+#
+# Same pre-existing sharp edge as require_plan() (not introduced here, but
+# hit more often now that this runs on every commit instead of just at
+# push): a merge commit pulling unrelated main history into a long-lived
+# branch can make this see diffs in files the branch author never touched,
+# and refuse the merge unless Plan.md changed too.
 require_plan_staged() {
     if [[ ! -f Plan.md ]]; then
         echo "Plan.md not found at repo root. Add a Plan.md describing this branch's intended changes before committing anything else -- override once with SKIP_COMMIT_PLAN_CHECK=1 git commit ..." >&2
@@ -86,6 +92,11 @@ require_plan_staged() {
     local merge_base
     merge_base="$(review_merge_base)"
 
+    # `git diff --quiet` exits 0 (true) when there's NO difference -- so
+    # other_changed=1 here means "nothing outside Plan.md changed" and only
+    # flips to 0 once the `||` fires on a real diff. Same inverted-boolean
+    # convention require_plan() above already uses; kept consistent rather
+    # than diverging for this one function.
     local other_changed=1
     git diff --cached --quiet "$merge_base" -- . ':(exclude)Plan.md' || other_changed=0
 
