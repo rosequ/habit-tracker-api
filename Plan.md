@@ -1,109 +1,79 @@
-# Plan: Configurable North Mini Code provider toggle (#15)
+# Plan: Mechanically gate "Plan.md before implementation," not just "at push"
 
 ## Context
 
-Issue #15 asks to evaluate replacing headless Claude Code with Cohere's
-North Mini Code across every unattended-agent call site. Scoped down (per
-discussion) to: make the provider configurable and toggleable per-workflow,
-default to today's Claude Code behavior everywhere, and produce the
-integration research the issue itself flagged as missing — not a full
-replacement, since the exact CLI/harness/tool-restriction/secrets story was
-unresearched going in, and two of the auto-merge-eligible workflows
-(`doc-gardener.yml`, `garbage-collector.yml`) shouldn't have their backing
-model changed without a side-by-side quality comparison first.
+Feedback from this session: in both prior branches (`recover-continuous-
+maintenance-fixes`, `north-mini-code-provider-toggle`), `Plan.md` was
+written or corrected *after* the actual code/workflow changes were already
+made — backfilled to describe what had already happened, sometimes more
+than once, rather than written first and implemented against. The existing
+`require_plan()` check (`scripts/review_common.sh`, used by both
+`agent-review-local`/`agent-review-cloud`) only runs at **push** time and
+only checks the *final* state of the diff vs `Plan.md` — it can't catch
+"implemented first, planned after," because by push time everything lines
+up regardless of the order things actually happened in.
+
+This branch moves a cheap, mechanical (no LLM call, no network — consistent
+with `.githooks/pre-commit`'s existing "fast enough for every commit"
+design) version of that check earlier, to **commit** time: you cannot
+commit a change to any tracked file unless `Plan.md` has *already* been
+touched, in this commit or an earlier one on the same branch, relative to
+where the branch forked from `main`. This can't fully enforce "the plan was
+written before you started thinking about the code" (git has no notion of
+edit order within a single commit), but it does mechanically block the
+exact failure mode from this session: committing implementation changes
+while `Plan.md` still reads identically to `main`.
 
 ## What this branch adds
 
-**1. `scripts/run_agent.sh`** (new) — the single provider-dispatch point
-every call site now goes through instead of calling `claude -p` directly.
-`AGENT_PROVIDER=claude` (default) is byte-for-byte the same invocation as
-before. `AGENT_PROVIDER=north` runs North Mini Code
-(`north-mini-code-1.0`) through the OpenCode CLI against OpenRouter
-(`openrouter/cohere/north-mini-code:free`, auth via `OPENROUTER_API_KEY`).
-Full rationale for those integration choices, and what's still unverified,
-is in `docs/architecture/agent-providers.md` (new) rather than duplicated
-in code comments.
+**1. `scripts/review_common.sh`** — new function `require_plan_staged()`,
+alongside the existing `require_plan()`. Same spirit (Plan.md must cover
+what's changed since the merge-base) but different diff source: `git diff
+--cached "$merge_base"` (index vs merge-base — i.e. what the *new* commit's
+tree will look like, which already includes every earlier commit on this
+branch since `merge_base`) instead of `require_plan()`'s working-tree-based
+diff. Refuses if any tracked path other than `Plan.md` differs from the
+merge-base in that comparison, but `Plan.md` itself does not. Existing
+`require_plan()` is untouched — it keeps gating pushes with its own
+(working-tree-inclusive, untracked-file-inclusive) semantics; this is a
+second, distinct, cheaper check for a different point in the lifecycle.
 
-**2. The five workflows** (`agent-ticket.yml`, `agent-followup.yml`,
-`doc-gardener.yml`, `garbage-collector.yml`, `quality-grader.yml`) — each
-drops its standalone "Install Claude Code" step (now lazy-installed inside
-`run_agent.sh`), replaces its `claude -p ...` invocation with
-`bash scripts/run_agent.sh <<< "$prompt"`, and adds
-`OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}` alongside the
-existing `ANTHROPIC_API_KEY` env (empty/unused whenever the provider stays
-`claude`). The `AGENT_PROVIDER` env var they set is deliberately **not**
-the same repository variable everywhere (see "Fixes made after
-agent-review-cloud" below): `agent-ticket.yml`/`agent-followup.yml`/
-`quality-grader.yml` read `vars.AGENT_PROVIDER`; `doc-gardener.yml`/
-`garbage-collector.yml` read `vars.AGENT_PROVIDER_AUTOMERGE` instead. Both
-default to `claude` whenever unset. Repository variables (not a
-`workflow_dispatch` input) because they need to work uniformly across
-`schedule`/`issues`/`workflow_dispatch` triggers.
+**2. `.githooks/pre-commit`** — sources `scripts/review_common.sh` and
+calls `require_plan_staged` after `make lint`, skippable via a new
+`SKIP_COMMIT_PLAN_CHECK=1` env var (mirrors the existing
+`SKIP_COMMIT_LINT=1` pattern) for the legitimate case of an early WIP commit
+before `Plan.md` is ready (e.g. `git init`-style scaffolding), not intended
+for routine use.
 
-**3. `scripts/agent_review_local.sh` / `scripts/agent_review_cloud.sh`** —
-same swap: `claude -p --model ... --tools ... <<< "$prompt"` becomes
-`CLAUDE_MODEL=... bash scripts/run_agent.sh --tools ... <<< "$prompt"`, so
-`AGENT_PROVIDER=north make agent-review-local`/`agent-review-cloud` works
-the same way locally as flipping the repository variable does in CI.
-
-**4. `AGENTS.md`** — one new bullet at the top of "CI/CD" pointing at
-`scripts/run_agent.sh`/`docs/architecture/agent-providers.md`; the
-`agent-review-local`/`-cloud` paragraph now says "the agent CLI for
-whichever `AGENT_PROVIDER` is active" instead of hardcoding "the `claude`
-CLI."
-
-## Fixes made after `agent-review-cloud`
-
-Round 1 (`REQUEST_CHANGES`) caught one real, blocking gap: every one of the
-five workflows read the *same* `vars.AGENT_PROVIDER`, so there was no way
-to move the three non-auto-merging workflows to `north` while keeping
-`doc-gardener.yml`/`garbage-collector.yml` on `claude` — flipping the one
-shared variable would flip all five simultaneously, directly contradicting
-the "don't flip this without a real comparison first" comments already
-sitting in those two workflows. Fixed by splitting into two independent
-repository variables (see "What this branch adds" above):
-`AGENT_PROVIDER_AUTOMERGE`, read only by the two auto-merge-capable
-workflows, is a distinct variable rather than a fallback/override of the
-general one, so a repo-wide flip of `AGENT_PROVIDER` can never silently
-change what they run. `docs/architecture/agent-providers.md` and
-`AGENTS.md` updated to describe both variables and the reasoning for
-keeping them separate.
+**3. `AGENTS.md`** — documents the new check and its override alongside the
+existing `pre-commit`/`pre-push` description.
 
 ## Out of scope
 
-- Actually setting either repository variable to `north` — this branch's
-  code changes leave every workflow defaulting to `claude` whenever its
-  variable is unset. `AGENT_PROVIDER` (the non-auto-merge one) was
-  separately set to `north` by explicit request before this gap was found;
-  see the PR description for that decision. `AGENT_PROVIDER_AUTOMERGE` has
-  deliberately not been set by this branch — that's a separate decision for
-  whoever wants `doc-gardener.yml`/`garbage-collector.yml` on `north`, made
-  with this PR's fix in place rather than the single-variable design that
-  couldn't express it safely.
-- The Kimi K* swap proposed in #10 — `run_agent.sh`'s dispatch is generic
-  enough that a third provider branch should follow the same shape later,
-  but isn't added here.
-- Verifying the `north` path end-to-end (no Cohere/OpenRouter account or
-  OpenCode install available while building this) — see
-  `docs/architecture/agent-providers.md`'s "What's unverified" section for
-  the specific open items before anyone relies on it.
+- Changing `require_plan()`'s own semantics or its push-time LLM-based
+  coverage check (`agent-review-local`'s Plan.md-vs-diff comparison) — this
+  branch only adds an earlier, cheaper, purely mechanical checkpoint.
+  Semantic "does Plan.md actually *describe* the diff well" is still only
+  checkable by the existing Haiku pass at push time; this new gate only
+  checks "was Plan.md touched at all."
+- Enforcing true edit-order (plan content written before code content) —
+  not observable from git state at all; out of reach for any hook.
 
 ## Verification
 
-1. `make lint` / `make test` pass.
-2. `bash -n` on every edited workflow's embedded shell and on
-   `scripts/run_agent.sh` itself.
-3. Every workflow YAML still parses (`yaml.safe_load`) after the edits.
-4. The `claude` path's arguments were compared line-by-line against each
-   call site's original invocation to confirm `AGENT_PROVIDER=claude` (the
-   default) passes the same flags with the same values as before this
-   branch, for every one of the seven call sites. Flag *order* differs for
-   the two review scripts (`--tools`/`--system-prompt` now come after
-   `--permission-mode` instead of before) since `run_agent.sh` appends them
-   conditionally -- not re-verified against the real `claude` CLI that
-   argument order is inert for it, only assumed from it being a standard
-   flag-parsing CLI.
-5. Not independently verified: the `north` path itself (no way to run
-   OpenCode/OpenRouter in this environment) -- this is the acceptance
-   criterion issue #15 itself, and `docs/architecture/agent-providers.md`
-   says so plainly rather than claiming untested behavior works.
+1. Exercised directly in an isolated scratch git repo (a throwaway repo
+   outside this working tree, not a worktree of this repo, since the check
+   under test is generic git-diff logic with no dependency on this repo's
+   actual files):
+   - A first commit that only adds `Plan.md` — allowed.
+   - A subsequent commit changing a tracked file, `Plan.md` untouched since
+     the merge-base — refused, with a clear message.
+   - A commit changing a tracked file where `Plan.md` was already modified
+     in an *earlier* commit on the same branch (not this one) — allowed,
+     confirming the check is cumulative-since-merge-base, not
+     this-commit-only.
+   - `SKIP_COMMIT_PLAN_CHECK=1` overrides the refusal.
+2. `bash -n` on the edited hook and `make lint` passes in this repo itself.
+3. Re-ran this exact check against this branch's own commits as they're
+   made, dogfooding it live while implementing.
+>>>>>>> a784392 (Add Plan.md for a mechanical plan-before-implementation gate)
