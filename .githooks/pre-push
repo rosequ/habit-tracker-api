@@ -59,12 +59,21 @@ fi
 
 echo "pre-push: running make lint / make test / make agent-review-local before allowing this push..." >&2
 
+# git invokes this hook outside of direnv's normal shell-hook flow (it's not
+# an interactive shell with `cd` having fired direnv), so .envrc's exports
+# (DATABASE_URL, etc.) aren't present even though they would be for the same
+# `make` targets run by hand in a terminal. `make dev`/`make smoke` already
+# hit this exact gap and route their own uvicorn invocation through `direnv
+# exec .` -- do the same here for `make test` (make lint doesn't touch the
+# DB and doesn't need it; make agent-review-local's own `make smoke` step
+# already routes through direnv exec internally via scripts/smoke_test.sh,
+# so only the bare `make test` call actually needs this).
 if ! make lint; then
     echo "Refusing to push -- make lint failed. Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
     exit 1
 fi
 
-if ! make test; then
+if ! direnv exec . make test; then
     echo "Refusing to push -- make test failed. Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
     exit 1
 fi
