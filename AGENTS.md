@@ -56,8 +56,8 @@ protection gap above):
 - `pre-push` — refuses to push directly to `main` (override once with
   `ALLOW_PUSH_TO_MAIN=1 git push ...` if you really mean to; only bypasses
   the main-push block, not the check below). Separately, refuses to push
-  **any** branch unless `make lint`, `make test`, and
-  `make agent-review-local` all pass first (a pure branch deletion is
+  **any** branch unless `make agent-review-local` (which itself runs `make
+  lint` first) and `make test` both pass (a pure branch deletion is
   exempt -- nothing to check). This runs on every push, including small WIP
   ones -- it boots Postgres via docker-compose, a real `uvicorn` process,
   and a `claude -p` call, so expect it to take a while and to need the

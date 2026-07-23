@@ -82,7 +82,7 @@ if [[ "${SKIP_PUSH_VERIFICATION:-}" == "1" ]]; then
     exit 0
 fi
 
-echo "pre-push: running make lint / make test / make agent-review-local before allowing this push..." >&2
+echo "pre-push: running make agent-review-local / make test before allowing this push..." >&2
 
 # git invokes this hook outside of direnv's normal shell-hook flow (it's not
 # an interactive shell with `cd` having fired direnv), so .envrc's exports
@@ -94,21 +94,20 @@ echo "pre-push: running make lint / make test / make agent-review-local before a
 # default ports and collided with another worktree's already-running
 # containers instead of using this worktree's own -- `scripts/smoke_test.sh`
 # only routes its *uvicorn* invocation through `direnv exec .` internally,
-# not its `docker-compose` one). `make lint` doesn't touch the DB and
-# doesn't strictly need this, but wrapping all three the same way is one
-# less thing to get wrong if that ever changes.
-if ! direnv exec . make lint; then
-    echo "Refusing to push -- make lint failed. Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
+# not its `docker-compose` one).
+#
+# Runs `make agent-review-local` first, not `make lint` standalone --
+# agent_review_local.sh's own first step IS `make lint`, and it already
+# exits immediately on failure before running `make smoke`, so a separate
+# standalone `make lint` call first would just lint twice on every push for
+# no benefit.
+if ! direnv exec . make agent-review-local; then
+    echo "Refusing to push -- make agent-review-local failed (lint/smoke/Plan.md-coverage). Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
     exit 1
 fi
 
 if ! direnv exec . make test; then
     echo "Refusing to push -- make test failed. Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
-    exit 1
-fi
-
-if ! direnv exec . make agent-review-local; then
-    echo "Refusing to push -- make agent-review-local failed (lint/smoke/Plan.md-coverage). Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
     exit 1
 fi
 

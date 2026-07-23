@@ -78,6 +78,22 @@ applied:
   by-default rather than an unconsidered gap, since this repo doesn't
   currently tag releases.
 
+Round 2 (`APPROVE`, no blocking issues) found one real cheap improvement,
+applied: `pre-push` ran `make lint` standalone AND `make agent-review-local`
+(whose own first step is `make lint`), linting twice on every push for no
+benefit. Reordered to run `make agent-review-local` first (still fails fast
+on a lint error, since `agent_review_local.sh` exits immediately on `make
+lint` failure before ever reaching `make smoke`) and dropped the redundant
+standalone call. Two suggestions explicitly deferred as genuine follow-up,
+not fixed here: `scripts/agent_review_local.sh`'s `claude -p` call has no
+timeout, which is now a bigger deal on every push than it was as a
+voluntary step (a hung/unauthenticated `claude` CLI blocks `git push`
+indefinitely, `SKIP_PUSH_VERIFICATION=1` the only escape) -- out of scope
+per this branch's own "no changes to agent_review_local.sh" boundary; no CI
+step runs `bash -n .githooks/*` to catch a future hook syntax error
+automatically -- a reasonable idea but a new CI job, not part of what this
+branch set out to do.
+
 ## Verification
 
 1. Tested directly in an isolated `git worktree` off `main`
