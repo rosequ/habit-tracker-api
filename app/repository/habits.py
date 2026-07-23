@@ -21,6 +21,12 @@ class HabitRepository:
     async def get_by_id(self, habit_id: int) -> Habit | None:
         return await self._session.get(Habit, habit_id)
 
+    async def get_all(self) -> list[Habit]:
+        result = await self._session.execute(
+            session.query(Habit).order_by(Habit.id.asc())
+        )
+        return result.scalars().all()
+
 
 def get_habit_repository(
     session: Annotated[AsyncSession, Depends(get_session)],
