@@ -89,7 +89,57 @@ mean to). Always work on a branch and open a PR instead.
   workflow independently re-runs the same three and opens a PR labeled
   `needs-human-review`. Never merges, regardless of check status.
 - `deploy.yml` — on push to `main` (which requires `fast-gates` to have
-  passed), triggers a Render deploy via deploy hook.
+  passed), triggers a Render deploy via deploy hook. Also has
+  `workflow_dispatch:` so `garbage-collector.yml` can explicitly re-dispatch
+  it after an auto-merge (see below — a `GITHUB_TOKEN`-authored push to
+  `main` doesn't cascade into this workflow's own `push` trigger).
+- `doc-gardener.yml` — daily cron. Headless Claude Code scans `docs/` and
+  `AGENTS.md` for staleness/contradictions with the actual code and fixes
+  them. Auto-merges (`gh pr merge --squash`) if the diff stays entirely
+  within `docs/`/`AGENTS.md` and lint/test/gitleaks pass; otherwise falls
+  back to `needs-human-review` like the other agent workflows.
+- `garbage-collector.yml` — weekly cron. Headless Claude Code finds one small
+  deviation from `AGENTS.md`'s architecture rules that import-linter's
+  layers contract wouldn't catch stylistically (dead code, a route doing
+  more than calling a service, small duplicated logic) and opens a small
+  refactor PR. Auto-merges only if lint/test/gitleaks pass AND the diff is
+  under 50 changed lines total AND it doesn't touch `.github/workflows/`,
+  `alembic/versions/`, `uv.lock`, or `pyproject.toml` — no exceptions on
+  either condition. On merge, re-dispatches `deploy.yml` (see above).
+- `quality-grader.yml` — monthly cron. Headless Claude Code writes/updates
+  `docs/quality.md`: a per-layer (routes/schemas/services/repository/db)
+  table of import-linter/layering compliance, doc freshness (last
+  `[doc-gardener]`-tagged touch), and open cleanup-PR counts. Deliberately no
+  test-coverage-delta column (a weak/lagging signal) — the compliance column
+  folds in a structural-lint-violations count instead. **Never auto-merges**,
+  always `needs-human-review` — a report generator shouldn't silently
+  rewrite its own audit trail.
 
-Every agent-authored PR from the two workflows above is labeled
-`needs-human-review` — a human always reviews before merging, no exception.
+None of the three scheduled workflows above can use GitHub's native
+`gh pr merge --auto`: that feature's "wait for required checks" behavior
+only exists via branch protection, which 403s on this repo (issue #7). So
+`doc-gardener.yml`/`garbage-collector.yml` run the fast-gates checks inline,
+in the same job, right after Claude produces a diff, and
+`scripts/gate_and_merge.sh` decides merge-vs-label synchronously from that —
+no cross-workflow polling or timeouts. Same reasoning is why they
+fire-and-forget `gh workflow run ci.yml --ref <branch>` for a visible
+(non-gating) check-run: a `GITHUB_TOKEN`-authored PR doesn't trigger
+`ci.yml`'s own `pull_request` event on its own (GitHub's anti-recursion
+rule for the default token).
+
+`doc-gardener.yml`'s auto-merge gate is syntax/scope-only by design —
+`make lint-docs` only checks docs are non-empty, there's no semantic
+correctness check on doc content. Accepted: doc-only mistakes are low-stakes
+and self-correcting (next day's run, or a human revert).
+
+GitHub auto-disables `schedule:`-triggered workflows after 60 days of no
+repository activity (silently — an email, not a visible Actions-tab
+failure). If one of the three scheduled workflows above appears to have
+stopped running, check that first before assuming a bug in the workflow
+itself.
+
+Every agent-authored PR from `agent-followup.yml`/`agent-ticket.yml`/
+`quality-grader.yml` is labeled `needs-human-review` — a human always
+reviews before merging, no exception. `doc-gardener.yml`/
+`garbage-collector.yml` are the only two workflows that can merge on their
+own, and only under the conditions above.

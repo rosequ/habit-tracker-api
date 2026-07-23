@@ -2,6 +2,14 @@ name: CI
 
 on:
   pull_request:
+  # Lets doc-gardener.yml/garbage-collector.yml fire-and-forget a real
+  # fast-gates check-run on their own PRs for auditability. GITHUB_TOKEN-
+  # authored pushes/PRs don't cascade into other workflows' pull_request
+  # triggers (anti-recursion rule), so without this, a bot-opened PR would
+  # never get an actual fast-gates entry on its Checks tab. Never relied on
+  # to gate anything -- those workflows run the same checks inline and
+  # decide merge-vs-label from that, not from this run.
+  workflow_dispatch:
 
 env:
   DATABASE_URL: postgresql+asyncpg://habit:habit_dev_password@localhost:5432/habit_tracker

@@ -1,0 +1,162 @@
+name: Quality Grader
+
+# Runs monthly. Headless Claude Code assesses the codebase and writes/updates
+# docs/quality.md: a per-layer (routes/schemas/services/repository/db) table
+# covering import-linter/layering compliance, doc freshness (last
+# [doc-gardener]-tagged touch), and count of currently-open cleanup PRs
+# touching that layer. Deliberately excludes a test-coverage-delta metric
+# (a weak/lagging signal) -- the layering-compliance column already folds in
+# a structural-lint-violations count as the behavior-grounded signal in its
+# place.
+#
+# Unlike doc-gardener.yml/garbage-collector.yml, this workflow NEVER
+# auto-merges: a report generator shouldn't be silently rewriting its own
+# audit trail. Always opens a PR labeled needs-human-review, regardless of
+# outcome.
+on:
+  schedule:
+    - cron: "0 8 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # Only need lint-imports installed -- no DB/migrations required, this
+      # workflow never touches app code or runs the test suite.
+      - run: uv sync --frozen
+
+      - name: Create a working branch
+        run: |
+          branch="quality-report/${GITHUB_RUN_NUMBER}"
+          echo "BRANCH=$branch" >> "$GITHUB_ENV"
+          git checkout -b "$branch"
+          git config user.name "habit-tracker-agent"
+          git config user.email "agent@users.noreply.github.com"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Gather ground-truth data
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/quality_report_data.sh > /tmp/quality-data.txt
+
+      - name: Ask Claude Code to write docs/quality.md
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          agents_md="$(cat AGENTS.md)"
+          quality_data="$(cat /tmp/quality-data.txt)"
+          existing_report="$(cat docs/quality.md 2>/dev/null || echo '(docs/quality.md does not exist yet -- this is the first run)')"
+
+          # Unique delimiter -- see doc-gardener.yml for why a bare EOF isn't
+          # safe here (interpolated file/report contents, not just static
+          # prose).
+          prompt="$(cat <<QUALITYGRADER_PROMPT_EOF_3d7c
+          You are a monthly code-quality report generator running
+          unattended, in a fresh branch off main. Nobody is watching this run
+          in real time.
+
+          Write or update docs/quality.md: ONE markdown table, one row per
+          layer (routes, schemas, services, repository, db), with these
+          columns:
+          - Import-linter / layering compliance (use the lint-imports output
+            and per-layer file counts below; today the single "Layered
+            architecture" contract is either fully kept or broken -- if kept,
+            every row is 100% with a note that 0 violations were found; if
+            broken, name the specific violating files/imports and compute
+            each affected layer's percentage from the violation count over
+            its file count)
+          - Doc freshness (the date + which doc file, from the data below --
+            routes/schemas share docs/domains/*/README.md's date;
+            services/repository/db share docs/architecture/api-conventions.md's
+            date; that's expected given today's doc structure, not an error)
+          - Open cleanup PRs touching that layer (from the data below)
+
+          Do NOT add a test-coverage-delta column or metric -- deliberately
+          excluded on purpose as a weak/lagging signal. Above or below the
+          table, add 1-2 short sentences of narrative interpretation if
+          something stands out (e.g. a layer with no doc touch in a long
+          time, or several open cleanup PRs stacking up on one layer) --
+          otherwise keep it terse, this is a report, not an essay.
+
+          Only ever edit docs/quality.md. Do not touch any other file.
+
+          Do NOT run git commit, git push, or gh pr create yourself -- the
+          workflow does that after you finish.
+
+          === AGENTS.md ===
+          $agents_md
+
+          === Ground-truth data for this run ===
+          $quality_data
+
+          === Existing docs/quality.md (update in place; this is the previous month's report) ===
+          $existing_report
+          QUALITYGRADER_PROMPT_EOF_3d7c
+          )"
+
+          claude -p \
+            --model claude-sonnet-5 \
+            --permission-mode bypassPermissions \
+            <<< "$prompt"
+
+      - name: Enforce scope -- only docs/quality.md may change
+        id: scope
+        run: |
+          changed="$(git diff --name-only; git ls-files --others --exclude-standard)"
+          if [[ -z "$changed" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$changed" != "docs/quality.md" ]]; then
+            echo "Claude's diff touched more than docs/quality.md:" >&2
+            echo "$changed" >&2
+            echo "changed=out-of-scope" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push branch and open PR
+        if: steps.scope.outputs.changed != 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create needs-human-review --color B60205 --description "Unattended agent output -- requires human review before merge" --force
+          gh label create quality-report --color 5A5A5A --description "Opened by quality-grader.yml" --force
+
+          if [[ "${{ steps.scope.outputs.changed }}" == "out-of-scope" ]]; then
+            echo "Refusing to commit -- Claude's diff touched files outside docs/quality.md. Working tree left as-is for investigation; no PR opened."
+            git diff --stat || true
+            exit 1
+          fi
+
+          git add docs/quality.md
+          git commit -m "[quality-report] monthly code-quality report (run $GITHUB_RUN_ID)"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "quality-report: monthly code-quality report (run $GITHUB_RUN_ID)" \
+            --label needs-human-review \
+            --label quality-report \
+            --body "Automated monthly code-quality assessment by \`quality-grader.yml\` (run $GITHUB_RUN_ID). This PR has NOT been merged and must not be merged without human review, regardless of check status -- a report generator shouldn't silently rewrite its own audit trail."
