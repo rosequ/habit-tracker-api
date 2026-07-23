@@ -1,156 +1,63 @@
-# Plan: Enforce lint/tests/review at commit and push time, not just at merge
+# Plan: Recover the stranded continuous-maintenance review fixes
 
 ## Context
 
-AGENTS.md documents a review loop (`agent-review-local` -> fix -> repeat ->
-`agent-review-cloud` -> address comments -> repeat) and requires a
-committed `Plan.md` describing the branch. Nothing actually enforces that
-loop happens before code leaves the machine — it's currently pure
-convention, and it was just skipped in practice (a prior branch was
-committed and pushed without running either review step). Separately, the
-existing `.githooks/pre-push` hook only blocks direct pushes to `main` — it
-does nothing for pushes of feature branches, which is where routine work
-actually leaves the machine.
+PR #13 ("Add three scheduled Continuous Maintenance workflows") merged only
+the first commit of its source branch (`add-continuous-maintenance-workflows`).
+A second commit on that same branch — "Apply 11 rounds of agent-review-cloud
+fixes to the continuous-maintenance workflows" (`337214b`) — was pushed to
+the remote branch *after* #13 had already merged, so it never made it into
+`main` and has no PR of its own. It sat there, reachable only via
+`origin/add-continuous-maintenance-workflows`, until this branch recovers it.
 
-This branch closes both gaps at the one point that's actually enforceable
-client-side (server-side branch protection 403s on this repo -- private,
-Free plan, issue #7 -- so nothing here can be made truly unbypassable; see
-`.githooks/pre-push`'s existing comment for the same root cause):
+This branch is exactly that recovery: `git cherry-pick 337214b` onto current
+`main`, nothing else. No new behavior beyond what that commit already
+contained and had already been through 11 rounds of `agent-review-cloud` for.
 
-**1. `.githooks/pre-commit`** (new) — runs `make lint` (ruff + import-linter
-+ file-size guard; all static, no DB/network needed) before allowing any
-commit. Fast enough to run on every commit without friction. Override once
-with `SKIP_COMMIT_LINT=1 git commit ...`.
+## What's in the recovered commit
 
-**2. `.githooks/pre-push`** (edited) — keeps the existing main-push block
-unchanged, and adds a second, independent gate that applies to pushing ANY
-branch, not just main: refuses the push unless `make lint`, `make test`,
-and `make agent-review-local` (lint + `make smoke` + a check that the diff
-is covered by `Plan.md`, via `scripts/review_common.sh`'s `require_plan` and
-a cheap Haiku-powered scope check) all pass. A pure branch deletion (`git
-push origin --delete <branch>` -- every ref's local SHA is the all-zero
-SHA) skips verification entirely, since there's nothing to check. Override
-once with `SKIP_PUSH_VERIFICATION=1 git push ...`.
+Real bugs found and fixed across `doc-gardener.yml`, `garbage-collector.yml`,
+`quality-grader.yml`, `scripts/gate_and_merge.sh`, and
+`scripts/quality_report_data.sh` (the full round-by-round narrative is
+preserved verbatim in commit `337214b`'s own message, carried into this
+branch by the cherry-pick — not repeated here to avoid a second,
+divergent copy of the same history):
 
-**Deliberately NOT run in either hook: `make agent-review-cloud`.** That's
-the deep, slow, costly reviewer-subagent pass (spins up a full Sonnet/Opus
-session with repo read access) — AGENTS.md's own loop already describes it
-as a once-before-asking-for-human-review step, not a repeat-every-push one.
-Gating every routine WIP push behind it would make pushing prohibitively
-slow/expensive for iterative work and doesn't match how the loop is meant
-to be used. `agent-review-local` (cheap, ~seconds, no external model calls
-beyond a single small Haiku prompt) is the right gate for "does every push
-meet a baseline," not `agent-review-cloud`.
+- A GitHub Actions script-injection hole: `quality-grader.yml` interpolated
+  an untrusted step output (file paths an unattended, `bypassPermissions`
+  Claude session chose) directly into a `run:` script body instead of
+  passing it via `env:`.
+- `gitleaks/gitleaks-action@v2` silently scanning this repo's entire git
+  history instead of just the current diff on `workflow_dispatch`/`schedule`
+  triggers, which would have permanently disabled auto-merge on any
+  pre-existing secret-shaped string unrelated to the actual change.
+- Untracked-file and staged-file gaps in all three workflows' "did anything
+  change" detection, which could silently no-op a run that actually produced
+  a diff.
+- `doc-gardener.yml` and `garbage-collector.yml` both missing a
+  `docs/quality.md` carve-out, so either could have auto-merged over
+  `quality-grader.yml`'s report with no human ever seeing it.
+- `quality-grader.yml`'s out-of-scope-file discard mishandling staged
+  deletions and staged new files.
+- An off-by-one in the gitleaks commit range (`${merge_base}^..HEAD`
+  over-scanned one already-merged `main` commit).
+- Commit-before-verify step ordering, so gitleaks/lint/test actually scope
+  themselves against the diff about to become the PR, not a stale range.
 
 ## Out of scope
 
-- Any change to `agent-review-local`/`agent-review-cloud` themselves
-  (`scripts/agent_review_local.sh` / `scripts/agent_review_cloud.sh`) --
-  reused as-is via `make agent-review-local`.
-- True (unbypassable) enforcement -- not achievable without upgrading this
-  repo off the Free plan or making it public to unlock branch protection.
-  Out of scope for this branch; these hooks are the same class of
-  client-side stopgap `.githooks/pre-push` already is for the main-push
-  block, just widened to cover pushing any branch.
-
-## Fixes made after `agent-review-cloud`
-
-Round 1 caught one real, blocking gap and several smaller ones, all
-applied:
-- **`AGENTS.md` was never updated.** This whole branch's point is making
-  the review loop actually happen instead of staying pure convention, and
-  the one doc that tells a contributor what `git config core.hooksPath
-  .githooks` does was left describing only the old main-push-only
-  behavior. Fixed: "Branching" now documents both hooks, their overrides,
-  and the changed semantics below.
-- `pre-commit`'s comment overclaimed why it unsets `GIT_DIR`/etc.: `make
-  lint` never runs pytest, so it was never actually exposed to the
-  corruption reproduced in `pre-push`'s verification section. Fixed the
-  comment to say so plainly and frame the unset there as consistency/
-  defense-in-depth, not an active fix for a reachable bug.
-- `ALLOW_PUSH_TO_MAIN=1` silently changed meaning: it used to short-circuit
-  the entire old hook, now it only bypasses the main-push block specifically
-  -- the lint/test/review gate still applies unless `SKIP_PUSH_VERIFICATION=1`
-  is also set. Called this out explicitly in both `AGENTS.md` and the
-  hook's own header comment, for anyone with muscle memory for the old flag.
-- The verification gate doesn't distinguish branches from tags (anything
-  with a non-zero local SHA triggers it) -- noted explicitly as intentional-
-  by-default rather than an unconsidered gap, since this repo doesn't
-  currently tag releases.
-
-Round 2 (`APPROVE`, no blocking issues) found one real cheap improvement,
-applied: `pre-push` ran `make lint` standalone AND `make agent-review-local`
-(whose own first step is `make lint`), linting twice on every push for no
-benefit. Reordered to run `make agent-review-local` first (still fails fast
-on a lint error, since `agent_review_local.sh` exits immediately on `make
-lint` failure before ever reaching `make smoke`) and dropped the redundant
-standalone call. Two suggestions explicitly deferred as genuine follow-up,
-not fixed here: `scripts/agent_review_local.sh`'s `claude -p` call has no
-timeout, which is now a bigger deal on every push than it was as a
-voluntary step (a hung/unauthenticated `claude` CLI blocks `git push`
-indefinitely, `SKIP_PUSH_VERIFICATION=1` the only escape) -- out of scope
-per this branch's own "no changes to agent_review_local.sh" boundary; no CI
-step runs `bash -n .githooks/*` to catch a future hook syntax error
-automatically -- a reasonable idea but a new CI job, not part of what this
-branch set out to do.
+- Anything beyond what `337214b` already contained -- this branch is a pure
+  recovery, not a chance to make further changes to these workflows. Any
+  further work (e.g. #15's provider-toggle) belongs in its own branch, based
+  on top of this one once merged.
 
 ## Verification
 
-1. Tested directly in an isolated `git worktree` off `main`
-   (`habit-tracker-api-hooks`), so as not to touch the primary working
-   directory or interfere with an in-flight review of unrelated work there.
-2. Confirmed `git rev-parse --show-toplevel` (which both hooks `cd` into)
-   resolves to the worktree's own path when run from within it, not the
-   main working directory's -- each git worktree has its own independent
-   checkout of tracked files including `.githooks/`, so hooks in one
-   worktree can't affect another.
-3. `pre-commit`: committed a trivial change and confirmed `make lint`
-   actually runs and the commit succeeds when it passes; then staged a file
-   with a deliberate unused-import lint violation and confirmed the commit
-   is refused with the lint error shown; then confirmed
-   `SKIP_COMMIT_LINT=1 git commit` overrides it. All three matched expected
-   behavior.
-4. `bash -n` on both hook scripts.
-5. `pre-push` was exercised for real, against the actual GitHub remote (this
-   branch's own push), not just read through. That real run surfaced two
-   genuine bugs neither `bash -n` nor reasoning about the script would have
-   caught:
-   - **`make test` failed with a missing `DATABASE_URL`.** `git push`
-     doesn't run inside direnv's normal shell-hook flow, so `.envrc`'s
-     exports aren't present for a bare `make test` call even though they
-     are for a human running the same target in an already-direnv-loaded
-     terminal -- the exact class of bug `make dev`/`make smoke` already hit
-     and fixed by routing through `direnv exec .`. Fixed the same way.
-   - **Worse: `make test` (before that fix) silently corrupted this
-     worktree's own git index.** In a git *worktree* specifically (verified
-     this doesn't happen in a plain, non-worktree repo), git sets `GIT_DIR`
-     in a hook's environment, and it leaks into any subprocess the hook
-     spawns -- including `tests/test_check_file_sizes.py`'s own supposedly-
-     isolated `git init`/`git add` calls in a pytest `tmp_path`, which then
-     silently mutated the real worktree's index instead of an isolated one.
-     Reproduced this directly (with `GIT_DIR` set: corrupts; unset: clean)
-     to confirm causation before fixing, and recovered the one real
-     corruption incident cleanly with `git reset` (working tree content was
-     never touched, only the index -- confirmed via `git show HEAD:<path>`
-     matching disk before resetting). Fixed by unsetting
-     `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_COMMON_DIR` at the top
-     of both hooks.
-   - Also found: `make agent-review-local`'s own `make smoke` step needs
-     `DB_PORT`/`PROMETHEUS_PORT` for its `docker-compose up -d` call too --
-     `scripts/smoke_test.sh` only routes its *uvicorn* invocation through
-     `direnv exec .` internally, not `docker-compose`. Without this, that
-     call fell back to default ports and collided with another worktree's
-     already-running containers. Fixed by routing all three `make` calls in
-     `pre-push` (`lint`, `test`, `agent-review-local`) through `direnv exec
-     .` uniformly, rather than cherry-picking which ones "need" it.
-   - After all three fixes, a real `git push` of this branch ran `make
-     lint` / `make test` / `make agent-review-local` (lint + `make smoke` +
-     the Plan.md-coverage check) cleanly end-to-end and succeeded.
-
-6. The pure-branch-deletion skip path was exercised for real too: pushed a
-   disposable `throwaway-delete-test` branch, then `git push origin
-   --delete throwaway-delete-test` completed in ~1.2s with no
-   lint/test/agent-review-local output at all -- confirming the
-   `any_non_delete_ref` check correctly recognized every ref in that push
-   as a deletion and skipped verification entirely, rather than just
-   reading correctly on paper.
+1. `git diff 416e342 337214b -- .github/workflows/ scripts/` reviewed
+   directly to confirm the cherry-pick's content matches what was described
+   in the original 11-round review (no drift from rebasing/cherry-picking).
+2. `make lint` and `make test` run against the merged result.
+3. Not independently re-verified end-to-end beyond what `337214b`'s own
+   commit message already documents (its point 7: the actual `claude -p`
+   prompts haven't executed end-to-end outside a real Actions run) -- this
+   branch doesn't change that; it only stops the fixes from being lost.

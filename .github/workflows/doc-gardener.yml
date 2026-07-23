@@ -25,9 +25,12 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
-  actions: write
 
 concurrency:
+  # No cancel-in-progress (defaults to false): this does a non-atomic
+  # git/gh sequence (branch, commit, push, PR, maybe merge) -- queuing a
+  # second run behind an in-flight one is safe; cancelling one mid-sequence
+  # is not.
   group: ${{ github.workflow }}
 
 jobs:
@@ -77,7 +80,9 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           agents_md="$(cat AGENTS.md)"
-          docs_tree="$(find docs -type f -name '*.md' -print -exec echo '---' \; -exec cat {} \;)"
+          # Excludes docs/quality.md: it's off-limits to this workflow (see
+          # the prompt below), so there's no reason to spend context on it.
+          docs_tree="$(find docs -type f -name '*.md' -not -path 'docs/quality.md' -print -exec echo '---' \; -exec cat {} \;)"
 
           # Unique delimiter, deliberately unquoted so the interpolated
           # sections expand -- docs prose is untrusted-shaped text that could
@@ -98,13 +103,17 @@ jobs:
           issue number, command name) that's now broken or wrong.
 
           Hard scope limit: only ever edit files under docs/ or AGENTS.md
-          itself. If fixing a contradiction would require changing code
-          instead of docs, do NOT touch the code -- leave it as-is and
-          explain what you found in your final message instead. This
-          restriction is enforced mechanically after you finish, not just by
-          this instruction: a change outside docs/ or AGENTS.md will force
-          this PR to needs-human-review instead of auto-merging, regardless
-          of how correct it is.
+          itself, with ONE exception: never touch docs/quality.md. That file
+          is generated monthly by a separate, human-reviewed process
+          (quality-grader.yml) -- it is not yours to fix or tidy, even if it
+          looks stale or contradictory. If fixing a contradiction would
+          require changing code instead of docs, do NOT touch the code --
+          leave it as-is and explain what you found in your final message
+          instead. This restriction is enforced mechanically after you
+          finish, not just by this instruction: a change outside docs/ or
+          AGENTS.md (or any change to docs/quality.md specifically) will
+          force this PR to needs-human-review instead of auto-merging,
+          regardless of how correct it is.
 
           If nothing is stale, make no changes and say so plainly in your
           final message.
@@ -129,11 +138,33 @@ jobs:
       - name: Check for changes
         id: changes
         run: |
-          if git diff --quiet && git diff --cached --quiet; then
+          # Bare `git diff --name-only` only reports UNSTAGED modifications
+          # to tracked files -- it misses both staged changes (nothing in
+          # the prompt forbids Claude from running `git add`, only `git
+          # commit`/`push`/`pr create`) and brand-new, un-`git add`ed files.
+          # Union in `--cached` and untracked files too, or a fix that
+          # stages a file (or ADDS a doc, e.g. a missing
+          # docs/domains/<x>/README.md) would report changed=false and get
+          # silently discarded, with no PR and no explanation.
+          changed="$(git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard)"
+          if [[ -z "$changed" ]]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Commit Claude's changes
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          # Commit BEFORE verification/gitleaks below, not after -- both of
+          # those need a real commit to scope themselves against
+          # (git merge-base/log-opts operate on commits, not the working
+          # tree). Committing this early, before this run's own checks, is
+          # exactly what makes those checks meaningful: they verify what's
+          # actually about to become the PR, not a stale, already-merged
+          # range.
+          git add -A
+          git commit -m "[doc-gardener] fix stale/contradictory docs (run $GITHUB_RUN_ID)"
 
       - name: Inline fast-gates-equivalent verification
         if: steps.changes.outputs.changed == 'true'
@@ -141,49 +172,94 @@ jobs:
         continue-on-error: true
         run: |
           make lint
+          make lint-docs
           make test
 
-      - name: gitleaks
+      - name: gitleaks (scoped to this branch's own commit, not full history)
         if: steps.changes.outputs.changed == 'true'
         id: gitleaks
         continue-on-error: true
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # gitleaks-action only scopes its scan to a commit range for
+          # `push`/`pull_request` events (confirmed by reading its source --
+          # https://github.com/gitleaks/gitleaks-action/blob/main/src/index.js).
+          # For `workflow_dispatch`/`schedule` (this workflow's own triggers)
+          # it adds no --log-opts range at all and scans this repo's ENTIRE
+          # git history instead. That's wrong for an inline fast-gates-
+          # equivalent gate: slow, and any pre-existing secret-shaped string
+          # anywhere in history -- unrelated to this run's actual diff --
+          # would fail this check forever, permanently disabling auto-merge
+          # regardless of how clean the current diff is. Run the gitleaks
+          # CLI directly instead, scoped to just the commit(s) this branch
+          # adds on top of main. This only works because "Commit Claude's
+          # changes" above already ran -- HEAD is the new commit, not main,
+          # by the time this executes.
+          GITLEAKS_VERSION=8.24.3
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz gitleaks
+          merge_base="$(git merge-base HEAD main)"
+          # `${merge_base}^..HEAD` (with the caret) is NOT "just the commits
+          # this branch adds" -- `A^..B` excludes ancestors of A^, and
+          # merge_base isn't its own ancestor via its parent, so merge_base
+          # ITSELF is included too. Since this branch always adds exactly
+          # one commit on top of main, that scanned an extra, already-merged
+          # main commit every run (verified directly: `git log
+          # merge_base^..HEAD` on a 2-commit-deep main returned both the new
+          # commit and main's tip; `git log merge_base..HEAD`, no caret,
+          # returned only the new commit). `A..B` (no caret) is the correct,
+          # standard "commits on B not on A" range.
+          ./gitleaks detect --redact -v --log-opts="--no-merges --first-parent ${merge_base}..HEAD"
 
       - name: Push branch and open PR
         if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git add -A
-          git commit -m "[doc-gardener] fix stale/contradictory docs (run $GITHUB_RUN_ID)"
           git push origin "$BRANCH"
 
           gh label create doc-gardener --color 0E8A16 --description "Opened by doc-gardener.yml" --force
 
-          gh pr create \
+          # `gh pr create` has no --json flag -- it prints the new PR's URL
+          # to stdout on success, which ends in .../pull/<number>. Extract
+          # the number from that directly instead of a separate `gh pr list`
+          # lookup afterward (a small eventual-consistency race, and an
+          # extra API round-trip for no benefit).
+          pr_url="$(gh pr create \
             --base main \
             --head "$BRANCH" \
-            --title "doc-gardener: fix stale docs (run $GITHUB_RUN_ID)" \
+            --title "Fix stale docs (run $GITHUB_RUN_ID)" \
             --label doc-gardener \
-            --body "Automated documentation-freshness pass by \`doc-gardener.yml\` (run $GITHUB_RUN_ID). Auto-merges if it stays entirely within \`docs/\`/\`AGENTS.md\` and lint/test/gitleaks pass -- otherwise falls back to \`needs-human-review\`."
+            --body "Automated documentation-freshness pass by \`doc-gardener.yml\` (run $GITHUB_RUN_ID). Auto-merges if it stays entirely within \`docs/\`/\`AGENTS.md\` and lint/test/gitleaks pass -- otherwise falls back to \`needs-human-review\`.")"
+          echo "PR_NUMBER=${pr_url##*/}" >> "$GITHUB_ENV"
 
       - name: Decide merge vs. needs-human-review
         if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pr_number="$(gh pr list --head "$BRANCH" --json number -q '.[0].number')"
+          pr_number="$PR_NUMBER"
 
           verify_passed=true
-          if [[ "${{ steps.verify.outcome }}" != "success" || "${{ steps.gitleaks.outcome }}" != "success" ]]; then
+          failed=()
+          if [[ "${{ steps.verify.outcome }}" != "success" ]]; then
+            failed+=("make lint/make lint-docs/make test")
+          fi
+          if [[ "${{ steps.gitleaks.outcome }}" != "success" ]]; then
+            failed+=("gitleaks")
+          fi
+          if [[ ${#failed[@]} -gt 0 ]]; then
             verify_passed=false
           fi
+          # `"${failed[*]}"` with IFS=', ' only actually joins on the FIRST
+          # character of IFS (a comma, no space) -- printf+strip instead to
+          # get the intended ", "-separated list.
+          joined="$(printf ', %s' "${failed[@]}")"
+          verify_detail="the inline verification failed: ${joined#, }"
 
           bash scripts/gate_and_merge.sh \
             --pr "$pr_number" \
             --verify-passed "$verify_passed" \
+            --verify-detail "$verify_detail" \
             --marker "[doc-gardener]" \
             --require-path-prefix "docs/" \
-            --require-exact-path "AGENTS.md"
+            --require-exact-path "AGENTS.md" \
+            --deny-glob "docs/quality.md"

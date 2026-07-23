@@ -19,6 +19,7 @@ source scripts/review_common.sh
 
 PR=""
 VERIFY_PASSED=""
+VERIFY_DETAIL="the inline verification (lint/test/gitleaks) did not pass"
 MARKER=""
 MAX_DIFF_LINES=""
 REDEPLOY=0
@@ -30,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --pr) PR="$2"; shift 2 ;;
         --verify-passed) VERIFY_PASSED="$2"; shift 2 ;;
+        --verify-detail) VERIFY_DETAIL="$2"; shift 2 ;;
         --marker) MARKER="$2"; shift 2 ;;
         --max-diff-lines) MAX_DIFF_LINES="$2"; shift 2 ;;
         --deny-glob) DENY_GLOBS+=("$2"); shift 2 ;;
@@ -51,7 +53,7 @@ changed_files="$(git diff --name-only "$merge_base")"
 reasons=()
 
 if [[ "$VERIFY_PASSED" != "true" ]]; then
-    reasons+=("the inline verification (lint/test/gitleaks) did not pass")
+    reasons+=("$VERIFY_DETAIL")
 fi
 
 # `git diff --shortstat` omits the insertions clause, the deletions clause,
@@ -98,14 +100,6 @@ if [[ ${#REQUIRE_PATH_PREFIXES[@]} -gt 0 || ${#REQUIRE_EXACT_PATHS[@]} -gt 0 ]];
     done <<< "$changed_files"
 fi
 
-# Always fire a real, visible fast-gates check-run on this PR for
-# auditability -- ci.yml's `pull_request` trigger won't fire on its own here
-# (GITHUB_TOKEN-authored pushes/PRs don't cascade into other workflows'
-# triggers), so without this the PR would show no checks at all. Never
-# influences the decision above; fire-and-forget.
-branch="$(git rev-parse --abbrev-ref HEAD)"
-gh workflow run ci.yml --ref "$branch" || echo "warning: could not dispatch ci.yml for visibility (non-fatal)" >&2
-
 if [[ ${#reasons[@]} -gt 0 ]]; then
     echo "==> Not auto-merging PR #$PR:"
     printf '  - %s\n' "${reasons[@]}"
@@ -118,7 +112,18 @@ $(printf -- '- %s\n' "${reasons[@]}")"
 fi
 
 echo "==> All auto-merge conditions met for PR #$PR -- merging."
-gh pr merge --squash --delete-branch --subject "$MARKER $(gh pr view "$PR" --json title -q .title)" "$PR"
+pr_title="$(gh pr view "$PR" --json title -q .title)"
+if ! gh pr merge --squash --delete-branch --subject "$MARKER $pr_title" "$PR"; then
+    # If the merge itself fails (e.g. main moved and now conflicts, or a
+    # permissions hiccup), don't let `set -e` just abort here -- that would
+    # leave the PR silently unlabeled and unmerged, with no trail explaining
+    # why. Fall back to the same needs-human-review path as a failed gate.
+    echo "==> gh pr merge failed for PR #$PR -- falling back to needs-human-review." >&2
+    gh label create needs-human-review --color B60205 --description "Unattended agent output -- requires human review before merge" --force
+    gh pr edit "$PR" --add-label needs-human-review
+    gh pr comment "$PR" --body "Automated merge attempt failed (see this run's log) after all auto-merge conditions passed -- needs a human to investigate and merge manually."
+    exit 0
+fi
 
 if [[ "$REDEPLOY" -eq 1 ]]; then
     # garbage-collector's merge just pushed to main via GITHUB_TOKEN, which

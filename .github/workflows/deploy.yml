@@ -1,10 +1,12 @@
 name: Deploy
 
-# main is protected and requires the fast-gates check (see branch
-# protection on main), so anything landing here via a normal merge has
-# already passed Phase A's blocking checks. No need to re-gate on a fresh
-# CI run -- a push to main can only happen through a check-passing merge (or
-# an admin bypass, which is out of scope here).
+# No re-gating here: by the time a normal PR merge lands on main, fast-gates
+# has already run against it. This is NOT server-side enforced -- branch
+# protection 403s on this private, Free-plan repo (issue #7), so a merge
+# could in principle happen without fast-gates passing (or a direct push,
+# though .githooks/pre-push blocks that client-side). Re-running fast-gates
+# here wouldn't change that; it's tracked as a known gap, not solved by
+# this workflow.
 on:
   push:
     branches: [main]
