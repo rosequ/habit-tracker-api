@@ -8,6 +8,13 @@ name: Deploy
 on:
   push:
     branches: [main]
+  # garbage-collector.yml's auto-merge pushes to main using GITHUB_TOKEN,
+  # which (by GitHub's anti-recursion rule) does NOT cascade into this
+  # workflow's `push` trigger -- so it explicitly re-dispatches this via
+  # `gh workflow run deploy.yml --ref main` right after a successful merge.
+  # Without this, a garbage-collector auto-merge would silently leave Render
+  # serving a stale build until some human-authored push happened to land.
+  workflow_dispatch:
 
 jobs:
   deploy:

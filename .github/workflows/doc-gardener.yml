@@ -1,0 +1,189 @@
+name: Doc Gardener
+
+# Runs daily. Headless Claude Code scans docs/ and AGENTS.md for staleness or
+# contradictions with the actual code (a documented endpoint that no longer
+# exists, an outdated architecture description, a broken cross-reference) and
+# fixes them. Auto-merges if -- and only if -- the fix stays entirely within
+# docs/ + AGENTS.md and the inline fast-gates-equivalent checks pass; anything
+# else falls back to needs-human-review (see scripts/gate_and_merge.sh).
+#
+# This can't use gh pr merge --auto: that feature's "wait for required
+# checks" semantics only exist via branch protection, which 403s on this
+# private Free-plan repo (issue #7). So the checks below run inline, in this
+# same job, and gate_and_merge.sh decides merge-vs-label synchronously from
+# that result -- no polling, no timeout to tune.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+env:
+  DATABASE_URL: postgresql+asyncpg://habit:habit_dev_password@localhost:5432/habit_tracker
+  APP_PORT: 8000
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  garden:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: habit
+          POSTGRES_PASSWORD: habit_dev_password
+          POSTGRES_DB: habit_tracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - run: uv run alembic upgrade head
+
+      - name: Create a working branch
+        run: |
+          branch="doc-gardener/${GITHUB_RUN_NUMBER}"
+          echo "BRANCH=$branch" >> "$GITHUB_ENV"
+          git checkout -b "$branch"
+          git config user.name "habit-tracker-agent"
+          git config user.email "agent@users.noreply.github.com"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Ask Claude Code to garden the docs
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          agents_md="$(cat AGENTS.md)"
+          docs_tree="$(find docs -type f -name '*.md' -print -exec echo '---' \; -exec cat {} \;)"
+
+          # Unique delimiter, deliberately unquoted so the interpolated
+          # sections expand -- docs prose is untrusted-shaped text that could
+          # contain a bare "EOF" line, which would silently truncate a
+          # common-delimiter heredoc.
+          prompt="$(cat <<DOCGARDENER_PROMPT_EOF_9f31
+          You are a documentation-freshness gardener running unattended, on a
+          daily schedule, in a fresh branch off main. Nobody is watching this
+          run in real time.
+
+          Your job: compare AGENTS.md and every file under docs/ against the
+          ACTUAL current code (app/, tests/, Makefile, etc.) and fix anything
+          stale or contradictory. Examples of what to look for: a documented
+          endpoint, field, or behavior that no longer exists or has changed;
+          an architecture/layering description that no longer matches the
+          code; a "future work" or "out of scope" note describing something
+          that has since actually shipped; a cross-reference (file path,
+          issue number, command name) that's now broken or wrong.
+
+          Hard scope limit: only ever edit files under docs/ or AGENTS.md
+          itself. If fixing a contradiction would require changing code
+          instead of docs, do NOT touch the code -- leave it as-is and
+          explain what you found in your final message instead. This
+          restriction is enforced mechanically after you finish, not just by
+          this instruction: a change outside docs/ or AGENTS.md will force
+          this PR to needs-human-review instead of auto-merging, regardless
+          of how correct it is.
+
+          If nothing is stale, make no changes and say so plainly in your
+          final message.
+
+          Do NOT run git commit, git push, or gh pr create yourself -- the
+          workflow does that after you finish, using whatever working-tree
+          changes you leave behind.
+
+          === AGENTS.md ===
+          $agents_md
+
+          === docs/ (every .md file, concatenated) ===
+          $docs_tree
+          DOCGARDENER_PROMPT_EOF_9f31
+          )"
+
+          claude -p \
+            --model claude-sonnet-5 \
+            --permission-mode bypassPermissions \
+            <<< "$prompt"
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Inline fast-gates-equivalent verification
+        if: steps.changes.outputs.changed == 'true'
+        id: verify
+        continue-on-error: true
+        run: |
+          make lint
+          make test
+
+      - name: gitleaks
+        if: steps.changes.outputs.changed == 'true'
+        id: gitleaks
+        continue-on-error: true
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push branch and open PR
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git add -A
+          git commit -m "[doc-gardener] fix stale/contradictory docs (run $GITHUB_RUN_ID)"
+          git push origin "$BRANCH"
+
+          gh label create doc-gardener --color 0E8A16 --description "Opened by doc-gardener.yml" --force
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "doc-gardener: fix stale docs (run $GITHUB_RUN_ID)" \
+            --label doc-gardener \
+            --body "Automated documentation-freshness pass by \`doc-gardener.yml\` (run $GITHUB_RUN_ID). Auto-merges if it stays entirely within \`docs/\`/\`AGENTS.md\` and lint/test/gitleaks pass -- otherwise falls back to \`needs-human-review\`."
+
+      - name: Decide merge vs. needs-human-review
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pr_number="$(gh pr list --head "$BRANCH" --json number -q '.[0].number')"
+
+          verify_passed=true
+          if [[ "${{ steps.verify.outcome }}" != "success" || "${{ steps.gitleaks.outcome }}" != "success" ]]; then
+            verify_passed=false
+          fi
+
+          bash scripts/gate_and_merge.sh \
+            --pr "$pr_number" \
+            --verify-passed "$verify_passed" \
+            --marker "[doc-gardener]" \
+            --require-path-prefix "docs/" \
+            --require-exact-path "AGENTS.md"

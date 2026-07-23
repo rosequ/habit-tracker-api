@@ -1,0 +1,200 @@
+name: Garbage Collector
+
+# Runs weekly. Headless Claude Code scans the codebase for deviations from
+# AGENTS.md's architecture rules that import-linter's layers contract can't
+# catch stylistically (it only enforces the directed layer graph, not things
+# like a route doing business logic inline, dead code, or small duplicated
+# logic), dead code, and small opportunistic tidy-ups, then opens a small,
+# targeted refactor PR. Auto-merges only if the inline fast-gates-equivalent
+# checks pass AND the diff is under 50 changed lines total AND it doesn't
+# touch a small deny-list of categorically-higher-blast-radius paths
+# (workflow files, migrations, lockfile/config) regardless of size. Anything
+# else falls back to needs-human-review (see scripts/gate_and_merge.sh) --
+# no exceptions, per AGENTS.md.
+#
+# Same "why not gh pr merge --auto" rationale as doc-gardener.yml: branch
+# protection 403s here (issue #7), so the merge decision is made from an
+# inline check run in this same job, not a polled/awaited external one.
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+env:
+  DATABASE_URL: postgresql+asyncpg://habit:habit_dev_password@localhost:5432/habit_tracker
+  APP_PORT: 8000
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: habit
+          POSTGRES_PASSWORD: habit_dev_password
+          POSTGRES_DB: habit_tracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - run: uv run alembic upgrade head
+
+      - name: Create a working branch
+        run: |
+          branch="garbage-collector/${GITHUB_RUN_NUMBER}"
+          echo "BRANCH=$branch" >> "$GITHUB_ENV"
+          git checkout -b "$branch"
+          git config user.name "habit-tracker-agent"
+          git config user.email "agent@users.noreply.github.com"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Ask Claude Code to find and fix one small tidy-up
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          agents_md="$(cat AGENTS.md)"
+          api_conventions="$(cat docs/architecture/api-conventions.md)"
+
+          # Unique delimiter -- see doc-gardener.yml for why a bare EOF isn't
+          # safe here (interpolated file contents, not just static prose).
+          prompt="$(cat <<GARBAGECOLLECTOR_PROMPT_EOF_6b2d
+          You are a small-scope refactoring agent running unattended, on a
+          weekly schedule, in a fresh branch off main. Nobody is watching
+          this run in real time -- be conservative.
+
+          Your job: scan app/ for ONE small deviation from this repo's
+          architecture rules that import-linter's automated layers contract
+          would NOT catch on its own, because it only enforces the directed
+          import graph (routes -> schemas -> services -> repository -> db),
+          not the spirit of that layering. Look for things like: a route
+          doing more than calling a service and shaping the response: no
+          business logic in app/routes/; dead code (unused functions,
+          imports, or files); small duplicated logic that could be a shared
+          helper without changing behavior; a file creeping toward the
+          400-line split limit.
+
+          Fix exactly ONE such issue with the smallest correct change. This
+          is a hard constraint, not a suggestion: the resulting diff MUST be
+          under 50 changed lines total (insertions + deletions), or this PR
+          will NOT auto-merge regardless of correctness -- it'll sit in
+          needs-human-review instead. If the smallest correct fix for
+          anything you find would exceed that, pick a smaller issue instead,
+          or make no changes and describe the larger issue in your final
+          message for a human to pick up separately.
+
+          Do not touch .github/workflows/, alembic/versions/, uv.lock, or
+          pyproject.toml -- those are excluded from auto-merge eligibility
+          regardless of size, so changes there always need a human anyway.
+
+          If nothing worth fixing this small exists, make no changes and say
+          so plainly in your final message.
+
+          Do NOT run git commit, git push, or gh pr create yourself -- the
+          workflow does that after you finish, using whatever working-tree
+          changes you leave behind.
+
+          === AGENTS.md ===
+          $agents_md
+
+          === docs/architecture/api-conventions.md ===
+          $api_conventions
+          GARBAGECOLLECTOR_PROMPT_EOF_6b2d
+          )"
+
+          claude -p \
+            --model claude-sonnet-5 \
+            --permission-mode bypassPermissions \
+            <<< "$prompt"
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Inline fast-gates-equivalent verification
+        if: steps.changes.outputs.changed == 'true'
+        id: verify
+        continue-on-error: true
+        run: |
+          make lint
+          make test
+
+      - name: gitleaks
+        if: steps.changes.outputs.changed == 'true'
+        id: gitleaks
+        continue-on-error: true
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push branch and open PR
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git add -A
+          git commit -m "[garbage-collector] small architecture tidy-up (run $GITHUB_RUN_ID)"
+          git push origin "$BRANCH"
+
+          gh label create garbage-collector --color 5319E7 --description "Opened by garbage-collector.yml" --force
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "garbage-collector: small tidy-up (run $GITHUB_RUN_ID)" \
+            --label garbage-collector \
+            --body "Automated architecture tidy-up by \`garbage-collector.yml\` (run $GITHUB_RUN_ID). Auto-merges only if lint/test/gitleaks pass AND the diff is under 50 changed lines AND it doesn't touch \`.github/workflows/\`, \`alembic/versions/\`, \`uv.lock\`, or \`pyproject.toml\` -- otherwise falls back to \`needs-human-review\`, no exceptions."
+
+      - name: Decide merge vs. needs-human-review
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pr_number="$(gh pr list --head "$BRANCH" --json number -q '.[0].number')"
+
+          verify_passed=true
+          if [[ "${{ steps.verify.outcome }}" != "success" || "${{ steps.gitleaks.outcome }}" != "success" ]]; then
+            verify_passed=false
+          fi
+
+          bash scripts/gate_and_merge.sh \
+            --pr "$pr_number" \
+            --verify-passed "$verify_passed" \
+            --marker "[garbage-collector]" \
+            --max-diff-lines 50 \
+            --deny-glob ".github/workflows/*" \
+            --deny-glob "alembic/versions/*" \
+            --deny-glob "uv.lock" \
+            --deny-glob "pyproject.toml" \
+            --redeploy
