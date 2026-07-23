@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Habit
@@ -23,9 +24,9 @@ class HabitRepository:
 
     async def get_all(self) -> list[Habit]:
         result = await self._session.execute(
-            session.query(Habit).order_by(Habit.id.asc())
+            select(Habit).order_by(Habit.id.asc())
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
 
 
 def get_habit_repository(
