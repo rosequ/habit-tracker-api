@@ -1,21 +1,114 @@
 #!/usr/bin/env bash
-# Refuses to push directly to main -- open a PR instead. GitHub branch
-# protection can't enforce this server-side on a private repo on the Free
-# plan (see issue #7), so this is a client-side stopgap: anyone who wants to
-# skip it can still disable/bypass the hook locally or push via the GitHub
-# UI/API. Enable with: git config core.hooksPath .githooks
+# 1. Refuses to push directly to main -- open a PR instead. GitHub branch
+#    protection can't enforce this server-side on a private repo on the Free
+#    plan (see issue #7), so this is a client-side stopgap: anyone who wants
+#    to skip it can still disable/bypass the hook locally or push via the
+#    GitHub UI/API. Override once with: ALLOW_PUSH_TO_MAIN=1 git push ...
+#
+# 2. Refuses to push ANY ref -- not just a main branch, and not just
+#    branches (a tag push hits this too, since it only cares whether a
+#    ref's local SHA is non-zero, i.e. not a pure deletion) -- unless `make
+#    lint`, `make test`, and `make agent-review-local` (lint + smoke + a
+#    check that the diff is covered by Plan.md) all pass. This is the
+#    actual "does this push meet the bar documented in AGENTS.md" gate,
+#    applied at the one point client-side tooling can still catch it before
+#    work leaves this machine: nothing here is server-side enforced (same
+#    root cause as the main-push block above), so it's still bypassable the
+#    same way. `make agent-review-cloud` (the deeper, slower, costlier
+#    reviewer subagent pass) is deliberately NOT run here -- it's meant to
+#    run once, deliberately, before asking a human to review a PR, not on
+#    every push of routine WIP work. Override once with:
+#    SKIP_PUSH_VERIFICATION=1 git push ...
+#
+# NOTE on a semantic change to an existing flag: previously
+# ALLOW_PUSH_TO_MAIN=1 short-circuited this ENTIRE hook (exit 0
+# immediately). Now it only bypasses check #1 (the main-push block) --
+# check #2 above still runs and can still refuse the push unless
+# SKIP_PUSH_VERIFICATION=1 is ALSO set. If you have muscle memory for
+# ALLOW_PUSH_TO_MAIN=1 meaning "let me push, no questions asked," it no
+# longer does.
+#
+# Enable both hooks with: git config core.hooksPath .githooks
 set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
 
-if [[ "${ALLOW_PUSH_TO_MAIN:-}" == "1" ]]; then
+# Git sets GIT_DIR (and can set GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR)
+# in a hook's environment when the hook runs inside a git worktree (it does
+# NOT do this for a plain, non-worktree repo -- confirmed directly).
+# Anything this hook spawns inherits that by default, including `make
+# test`/`make agent-review-local` -> pytest -> anything that itself shells
+# out to `git` in an isolated temp directory (e.g.
+# tests/test_check_file_sizes.py's own `git init`/`git add` in a pytest
+# tmp_path). Without unsetting these first, that "isolated" git repo isn't
+# isolated at all: its git commands resolve against THIS worktree's real
+# gitdir/index instead of the tmp directory, corrupting the real index --
+# reproduced this directly while building this hook. Same class of fix as
+# scripts/review_common.sh's unset of
+# CLAUDE_CODE_SESSION_ID/CLAUDE_CODE_CHILD_SESSION.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+
+ZERO_SHA="0000000000000000000000000000000000000000"
+any_non_delete_ref=0
+
+if [[ "${ALLOW_PUSH_TO_MAIN:-}" != "1" ]]; then
+    while read -r local_ref local_sha remote_ref remote_sha; do
+        if [[ "$remote_ref" == "refs/heads/main" ]]; then
+            echo "Refusing to push directly to main -- open a PR instead." >&2
+            echo "One-time override: ALLOW_PUSH_TO_MAIN=1 git push ..." >&2
+            exit 1
+        fi
+        if [[ "$local_sha" != "$ZERO_SHA" ]]; then
+            any_non_delete_ref=1
+        fi
+    done
+else
+    # Still need to know whether this push is a pure branch deletion (to
+    # decide whether verification below applies), even though the main-push
+    # block itself is overridden.
+    while read -r local_ref local_sha remote_ref remote_sha; do
+        if [[ "$local_sha" != "$ZERO_SHA" ]]; then
+            any_non_delete_ref=1
+        fi
+    done
+fi
+
+if [[ "$any_non_delete_ref" -eq 0 ]]; then
+    # Every ref in this push is a deletion (e.g. `git push origin --delete
+    # some-branch`) -- nothing to lint/test/review.
     exit 0
 fi
 
-while read -r local_ref local_sha remote_ref remote_sha; do
-    if [[ "$remote_ref" == "refs/heads/main" ]]; then
-        echo "Refusing to push directly to main -- open a PR instead." >&2
-        echo "One-time override: ALLOW_PUSH_TO_MAIN=1 git push ..." >&2
-        exit 1
-    fi
-done
+if [[ "${SKIP_PUSH_VERIFICATION:-}" == "1" ]]; then
+    exit 0
+fi
+
+echo "pre-push: running make agent-review-local / make test before allowing this push..." >&2
+
+# git invokes this hook outside of direnv's normal shell-hook flow (it's not
+# an interactive shell with `cd` having fired direnv), so .envrc's exports
+# (DATABASE_URL, DB_PORT, PROMETHEUS_PORT, etc.) aren't present even though
+# they would be for the same `make` targets run by hand in a terminal.
+# `make test` needs DATABASE_URL; `make agent-review-local`'s own `make
+# smoke` step needs DB_PORT/PROMETHEUS_PORT for its `docker-compose up -d`
+# call (confirmed the hard way: without this, that call fell back to the
+# default ports and collided with another worktree's already-running
+# containers instead of using this worktree's own -- `scripts/smoke_test.sh`
+# only routes its *uvicorn* invocation through `direnv exec .` internally,
+# not its `docker-compose` one).
+#
+# Runs `make agent-review-local` first, not `make lint` standalone --
+# agent_review_local.sh's own first step IS `make lint`, and it already
+# exits immediately on failure before running `make smoke`, so a separate
+# standalone `make lint` call first would just lint twice on every push for
+# no benefit.
+if ! direnv exec . make agent-review-local; then
+    echo "Refusing to push -- make agent-review-local failed (lint/smoke/Plan.md-coverage). Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
+    exit 1
+fi
+
+if ! direnv exec . make test; then
+    echo "Refusing to push -- make test failed. Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
+    exit 1
+fi
 
 exit 0

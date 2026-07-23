@@ -1,100 +1,156 @@
-# Plan: Fix `make dev` and close the runtime-gating gap it exposed
+# Plan: Enforce lint/tests/review at commit and push time, not just at merge
 
 ## Context
 
-No GitHub issue is linked to this branch — it started as an ad-hoc fix for
-`make dev` crashing, and grew to include a gap it exposed in the review
-tooling added in PR #6 (`agent-review-local` / `agent-review-cloud`,
-documented in `AGENTS.md`).
+AGENTS.md documents a review loop (`agent-review-local` -> fix -> repeat ->
+`agent-review-cloud` -> address comments -> repeat) and requires a
+committed `Plan.md` describing the branch. Nothing actually enforces that
+loop happens before code leaves the machine — it's currently pure
+convention, and it was just skipped in practice (a prior branch was
+committed and pushed without running either review step). Separately, the
+existing `.githooks/pre-push` hook only blocks direct pushes to `main` — it
+does nothing for pushes of feature branches, which is where routine work
+actually leaves the machine.
 
-## Part 1 — `make dev` fixes (already committed: 18df950, d872487)
+This branch closes both gaps at the one point that's actually enforceable
+client-side (server-side branch protection 403s on this repo -- private,
+Free plan, issue #7 -- so nothing here can be made truly unbypassable; see
+`.githooks/pre-push`'s existing comment for the same root cause):
 
-**Problem:** `make dev` only ran `uvicorn` directly, which had two failures:
-1. `uvicorn` only inherits `.envrc`'s env vars (`DATABASE_URL`, `APP_PORT`,
-   etc.) if the calling shell already had direnv's hook fire for this
-   directory. Any other invocation path (script, editor terminal, fresh
-   shell) skipped that and crashed on startup with a missing `DATABASE_URL`.
-2. It never started `docker-compose` (`db`, `prometheus`), leaving Postgres
-   and Prometheus undiscoverable unless you separately remembered
-   `docker-compose up -d`.
+**1. `.githooks/pre-commit`** (new) — runs `make lint` (ruff + import-linter
++ file-size guard; all static, no DB/network needed) before allowing any
+commit. Fast enough to run on every commit without friction. Override once
+with `SKIP_COMMIT_LINT=1 git commit ...`.
 
-**Fix:**
-- `Makefile`: route the app command through `direnv exec .` so `.envrc` is
-  loaded explicitly regardless of caller shell state, and prepend
-  `docker-compose up -d` so one command brings up db, prometheus, and the
-  app together.
-- `AGENTS.md`: document that `make dev` now brings up docker-compose too.
+**2. `.githooks/pre-push`** (edited) — keeps the existing main-push block
+unchanged, and adds a second, independent gate that applies to pushing ANY
+branch, not just main: refuses the push unless `make lint`, `make test`,
+and `make agent-review-local` (lint + `make smoke` + a check that the diff
+is covered by `Plan.md`, via `scripts/review_common.sh`'s `require_plan` and
+a cheap Haiku-powered scope check) all pass. A pure branch deletion (`git
+push origin --delete <branch>` -- every ref's local SHA is the all-zero
+SHA) skips verification entirely, since there's nothing to check. Override
+once with `SKIP_PUSH_VERIFICATION=1 git push ...`.
 
-## Part 2 — Close the gap these fixes exposed in review gating
-
-**Problem:** neither `make dev` fix commit was actually checked by
-`agent-review-local`/`agent-review-cloud` before merging — `Plan.md` at the
-repo root was still the one from an earlier, unrelated feature (Issue #3,
-completions), and `.agent-review/` had no review log for either commit. Two
-runtime bugs surfaced afterward as a result:
-- `make dev` failing with "Address already in use" (a stale uvicorn process
-  from an earlier run was still bound to the port) — invisible to review even
-  in principle, since `agent-review-local` runs with no tools at all and
-  `agent-review-cloud` is read-only (`Read/Glob/Grep`, no `Bash`); neither
-  ever executes anything, so a process-lifecycle bug can't be caught by
-  reading a diff.
-- `make metrics-query` erroring on a multi-series PromQL query — not
-  actually a bug (the script's guard at `scripts/query_metrics.sh:34-41` is
-  intentional), but it highlighted that this repo's gating has no way to
-  distinguish "reviewed and passed" from "never reviewed at all."
-
-This part of the branch closes both holes: a stale/irrelevant `Plan.md` can
-no longer silently pass unrelated work as "planned," and there's now a cheap
-way to actually *run* the app as part of the fast review loop instead of only
-reading its diff.
-
-**1. `scripts/review_common.sh` — `require_plan` checks relevance, not just existence**
-
-Previously `require_plan` only checked that some `Plan.md` file exists at the
-repo root. Now it also fails if other tracked or untracked files changed
-since `BASE_REF` (`main`) but `Plan.md` itself didn't — the exact situation
-that let the `make dev` commits merge against a stale, unrelated plan.
-
-**2. `scripts/smoke_test.sh` + `make smoke`**
-
-A new target that actually boots the app the way `make dev` does
-(`docker-compose up -d`, then `direnv exec . uv run uvicorn app.main:app`)
-on `SMOKE_PORT` (default 8098, deliberately separate from `APP_PORT` so it
-doesn't collide with a `make dev` already running in another terminal),
-polls `/health` (which runs a real `SELECT 1` against Postgres) for up to
-20s, then tears the uvicorn process down via a `trap ... EXIT` cleanup.
-Fails loudly if the port's already taken, uvicorn exits early, or `/health`
-never responds — covering exactly the class of bug (env vars, docker-compose
-state, port conflicts) that a text-only diff review structurally cannot see.
-
-**3. `scripts/agent_review_local.sh` — wire `make smoke` into the fast gate**
-
-Runs `make smoke` right after `make lint` and before the Plan.md diff check,
-so the loop you're meant to run repeatedly while implementing
-(`agent-review-local` -> fix -> repeat) now includes a real runtime check,
-not just lint + a text-only scope check.
-
-**4. `AGENTS.md`**
-
-Documents `make smoke` and the new `require_plan` behavior under "How to
-verify your work."
+**Deliberately NOT run in either hook: `make agent-review-cloud`.** That's
+the deep, slow, costly reviewer-subagent pass (spins up a full Sonnet/Opus
+session with repo read access) — AGENTS.md's own loop already describes it
+as a once-before-asking-for-human-review step, not a repeat-every-push one.
+Gating every routine WIP push behind it would make pushing prohibitively
+slow/expensive for iterative work and doesn't match how the loop is meant
+to be used. `agent-review-local` (cheap, ~seconds, no external model calls
+beyond a single small Haiku prompt) is the right gate for "does every push
+meet a baseline," not `agent-review-cloud`.
 
 ## Out of scope
 
-- Actually merging `.githooks/pre-push` (branch `add-pre-push-hook` / PR #11)
-  into `main` — that's a separate, already-tracked piece of work.
-- Server-side branch protection (blocked on issue #7 — private repo on
-  GitHub's Free plan).
-- Any change to `scripts/query_metrics.sh` itself — its multi-series guard
-  is correct as-is; it was misdiagnosed as a bug in conversation before being
-  confirmed as intentional.
+- Any change to `agent-review-local`/`agent-review-cloud` themselves
+  (`scripts/agent_review_local.sh` / `scripts/agent_review_cloud.sh`) --
+  reused as-is via `make agent-review-local`.
+- True (unbypassable) enforcement -- not achievable without upgrading this
+  repo off the Free plan or making it public to unlock branch protection.
+  Out of scope for this branch; these hooks are the same class of
+  client-side stopgap `.githooks/pre-push` already is for the main-push
+  block, just widened to cover pushing any branch.
+
+## Fixes made after `agent-review-cloud`
+
+Round 1 caught one real, blocking gap and several smaller ones, all
+applied:
+- **`AGENTS.md` was never updated.** This whole branch's point is making
+  the review loop actually happen instead of staying pure convention, and
+  the one doc that tells a contributor what `git config core.hooksPath
+  .githooks` does was left describing only the old main-push-only
+  behavior. Fixed: "Branching" now documents both hooks, their overrides,
+  and the changed semantics below.
+- `pre-commit`'s comment overclaimed why it unsets `GIT_DIR`/etc.: `make
+  lint` never runs pytest, so it was never actually exposed to the
+  corruption reproduced in `pre-push`'s verification section. Fixed the
+  comment to say so plainly and frame the unset there as consistency/
+  defense-in-depth, not an active fix for a reachable bug.
+- `ALLOW_PUSH_TO_MAIN=1` silently changed meaning: it used to short-circuit
+  the entire old hook, now it only bypasses the main-push block specifically
+  -- the lint/test/review gate still applies unless `SKIP_PUSH_VERIFICATION=1`
+  is also set. Called this out explicitly in both `AGENTS.md` and the
+  hook's own header comment, for anyone with muscle memory for the old flag.
+- The verification gate doesn't distinguish branches from tags (anything
+  with a non-zero local SHA triggers it) -- noted explicitly as intentional-
+  by-default rather than an unconsidered gap, since this repo doesn't
+  currently tag releases.
+
+Round 2 (`APPROVE`, no blocking issues) found one real cheap improvement,
+applied: `pre-push` ran `make lint` standalone AND `make agent-review-local`
+(whose own first step is `make lint`), linting twice on every push for no
+benefit. Reordered to run `make agent-review-local` first (still fails fast
+on a lint error, since `agent_review_local.sh` exits immediately on `make
+lint` failure before ever reaching `make smoke`) and dropped the redundant
+standalone call. Two suggestions explicitly deferred as genuine follow-up,
+not fixed here: `scripts/agent_review_local.sh`'s `claude -p` call has no
+timeout, which is now a bigger deal on every push than it was as a
+voluntary step (a hung/unauthenticated `claude` CLI blocks `git push`
+indefinitely, `SKIP_PUSH_VERIFICATION=1` the only escape) -- out of scope
+per this branch's own "no changes to agent_review_local.sh" boundary; no CI
+step runs `bash -n .githooks/*` to catch a future hook syntax error
+automatically -- a reasonable idea but a new CI job, not part of what this
+branch set out to do.
 
 ## Verification
 
-1. `make lint` — ruff, import-linter, file-size guard (unchanged by this branch).
-2. `make smoke` — confirms the new target itself boots cleanly end-to-end.
-3. Manually confirmed `require_plan` fails against the stale completions-era
-   `Plan.md` (other files changed, `Plan.md` didn't) and passes once
-   `Plan.md` is actually updated.
-4. `make agent-review-local` — now exercises lint + smoke + the corrected
-   plan-relevance check together.
+1. Tested directly in an isolated `git worktree` off `main`
+   (`habit-tracker-api-hooks`), so as not to touch the primary working
+   directory or interfere with an in-flight review of unrelated work there.
+2. Confirmed `git rev-parse --show-toplevel` (which both hooks `cd` into)
+   resolves to the worktree's own path when run from within it, not the
+   main working directory's -- each git worktree has its own independent
+   checkout of tracked files including `.githooks/`, so hooks in one
+   worktree can't affect another.
+3. `pre-commit`: committed a trivial change and confirmed `make lint`
+   actually runs and the commit succeeds when it passes; then staged a file
+   with a deliberate unused-import lint violation and confirmed the commit
+   is refused with the lint error shown; then confirmed
+   `SKIP_COMMIT_LINT=1 git commit` overrides it. All three matched expected
+   behavior.
+4. `bash -n` on both hook scripts.
+5. `pre-push` was exercised for real, against the actual GitHub remote (this
+   branch's own push), not just read through. That real run surfaced two
+   genuine bugs neither `bash -n` nor reasoning about the script would have
+   caught:
+   - **`make test` failed with a missing `DATABASE_URL`.** `git push`
+     doesn't run inside direnv's normal shell-hook flow, so `.envrc`'s
+     exports aren't present for a bare `make test` call even though they
+     are for a human running the same target in an already-direnv-loaded
+     terminal -- the exact class of bug `make dev`/`make smoke` already hit
+     and fixed by routing through `direnv exec .`. Fixed the same way.
+   - **Worse: `make test` (before that fix) silently corrupted this
+     worktree's own git index.** In a git *worktree* specifically (verified
+     this doesn't happen in a plain, non-worktree repo), git sets `GIT_DIR`
+     in a hook's environment, and it leaks into any subprocess the hook
+     spawns -- including `tests/test_check_file_sizes.py`'s own supposedly-
+     isolated `git init`/`git add` calls in a pytest `tmp_path`, which then
+     silently mutated the real worktree's index instead of an isolated one.
+     Reproduced this directly (with `GIT_DIR` set: corrupts; unset: clean)
+     to confirm causation before fixing, and recovered the one real
+     corruption incident cleanly with `git reset` (working tree content was
+     never touched, only the index -- confirmed via `git show HEAD:<path>`
+     matching disk before resetting). Fixed by unsetting
+     `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_COMMON_DIR` at the top
+     of both hooks.
+   - Also found: `make agent-review-local`'s own `make smoke` step needs
+     `DB_PORT`/`PROMETHEUS_PORT` for its `docker-compose up -d` call too --
+     `scripts/smoke_test.sh` only routes its *uvicorn* invocation through
+     `direnv exec .` internally, not `docker-compose`. Without this, that
+     call fell back to default ports and collided with another worktree's
+     already-running containers. Fixed by routing all three `make` calls in
+     `pre-push` (`lint`, `test`, `agent-review-local`) through `direnv exec
+     .` uniformly, rather than cherry-picking which ones "need" it.
+   - After all three fixes, a real `git push` of this branch ran `make
+     lint` / `make test` / `make agent-review-local` (lint + `make smoke` +
+     the Plan.md-coverage check) cleanly end-to-end and succeeded.
+
+6. The pure-branch-deletion skip path was exercised for real too: pushed a
+   disposable `throwaway-delete-test` branch, then `git push origin
+   --delete throwaway-delete-test` completed in ~1.2s with no
+   lint/test/agent-review-local output at all -- confirming the
+   `any_non_delete_ref` check correctly recognized every ref in that push
+   as a deletion and skipped verification entirely, rather than just
+   reading correctly on paper.

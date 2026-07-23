@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Refuses to commit if `make lint` fails (ruff + import-linter + file-size --
+# all static, no DB/network needed, so this stays fast enough to run on
+# every commit without annoying friction). The heavier gate (tests, the
+# agent-review-local loop) lives in the pre-push hook instead, since that
+# fires far less often than individual commits. Enable both hooks together
+# with: git config core.hooksPath .githooks
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+# Git sets GIT_DIR (and can set GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR)
+# in a hook's environment when the hook runs inside a git worktree (it does
+# NOT do this for a plain, non-worktree repo -- confirmed directly). Any
+# subprocess this hook spawns inherits that by default. `make lint` itself
+# doesn't run pytest (ruff + import-linter + scripts/check_file_sizes.py
+# only, all direct against the real repo), so it isn't actually exposed to
+# the specific corruption this caused in pre-push (see that hook's comment
+# for the reproduced failure: `make test` -> pytest ->
+# tests/test_check_file_sizes.py's own "isolated" `git init`/`git add` in a
+# pytest tmp_path, which isn't isolated at all if GIT_DIR leaks in). Unset
+# here too anyway, for consistency and so this stays safe if `make lint`
+# ever grows a dependency that shells out to git the same way.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+
+if [[ "${SKIP_COMMIT_LINT:-}" == "1" ]]; then
+    exit 0
+fi
+
+if ! make lint; then
+    echo "Refusing to commit -- make lint failed. Fix it, or override once with SKIP_COMMIT_LINT=1 git commit ..." >&2
+    exit 1
+fi
+
+exit 0
