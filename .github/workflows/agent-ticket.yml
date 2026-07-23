@@ -154,7 +154,10 @@ jobs:
 
           git add -A
           git commit -m "Implement issue #$ISSUE_NUMBER (automated)"
-          git push origin "$BRANCH"
+          # --force is safe here: agent/issue-N branches are exclusively
+          # created and pushed by this job, so a retry should overwrite its
+          # own previous attempt rather than collide with it.
+          git push --force origin "$BRANCH"
 
           verification="$(cat /tmp/verification.md)"
           verify_outcome="${{ steps.verify.outcome }}"
