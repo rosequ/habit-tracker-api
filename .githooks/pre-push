@@ -76,14 +76,18 @@ echo "pre-push: running make lint / make test / make agent-review-local before a
 
 # git invokes this hook outside of direnv's normal shell-hook flow (it's not
 # an interactive shell with `cd` having fired direnv), so .envrc's exports
-# (DATABASE_URL, etc.) aren't present even though they would be for the same
-# `make` targets run by hand in a terminal. `make dev`/`make smoke` already
-# hit this exact gap and route their own uvicorn invocation through `direnv
-# exec .` -- do the same here for `make test` (make lint doesn't touch the
-# DB and doesn't need it; make agent-review-local's own `make smoke` step
-# already routes through direnv exec internally via scripts/smoke_test.sh,
-# so only the bare `make test` call actually needs this).
-if ! make lint; then
+# (DATABASE_URL, DB_PORT, PROMETHEUS_PORT, etc.) aren't present even though
+# they would be for the same `make` targets run by hand in a terminal.
+# `make test` needs DATABASE_URL; `make agent-review-local`'s own `make
+# smoke` step needs DB_PORT/PROMETHEUS_PORT for its `docker-compose up -d`
+# call (confirmed the hard way: without this, that call fell back to the
+# default ports and collided with another worktree's already-running
+# containers instead of using this worktree's own -- `scripts/smoke_test.sh`
+# only routes its *uvicorn* invocation through `direnv exec .` internally,
+# not its `docker-compose` one). `make lint` doesn't touch the DB and
+# doesn't strictly need this, but wrapping all three the same way is one
+# less thing to get wrong if that ever changes.
+if ! direnv exec . make lint; then
     echo "Refusing to push -- make lint failed. Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
     exit 1
 fi
@@ -93,7 +97,7 @@ if ! direnv exec . make test; then
     exit 1
 fi
 
-if ! make agent-review-local; then
+if ! direnv exec . make agent-review-local; then
     echo "Refusing to push -- make agent-review-local failed (lint/smoke/Plan.md-coverage). Fix it, or override once with SKIP_PUSH_VERIFICATION=1 git push ..." >&2
     exit 1
 fi
