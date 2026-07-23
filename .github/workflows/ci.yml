@@ -2,14 +2,6 @@ name: CI
 
 on:
   pull_request:
-  # Lets doc-gardener.yml/garbage-collector.yml fire-and-forget a real
-  # fast-gates check-run on their own PRs for auditability. GITHUB_TOKEN-
-  # authored pushes/PRs don't cascade into other workflows' pull_request
-  # triggers (anti-recursion rule), so without this, a bot-opened PR would
-  # never get an actual fast-gates entry on its Checks tab. Never relied on
-  # to gate anything -- those workflows run the same checks inline and
-  # decide merge-vs-label from that, not from this run.
-  workflow_dispatch:
 
 env:
   DATABASE_URL: postgresql+asyncpg://habit:habit_dev_password@localhost:5432/habit_tracker
@@ -137,7 +129,10 @@ jobs:
             --ref main \
             -f pr_number="$PR_NUMBER"
 
-  # Non-blocking. Placeholder until a real doc-gardener agent exists.
+  # Non-blocking. make lint-docs itself is still just a non-empty-files
+  # placeholder (see scripts/check_docs_freshness.sh) -- doc-gardener.yml now
+  # exists and does the real staleness/contradiction checking, but on its
+  # own schedule, not as a PR-blocking gate here.
   doc-freshness:
     name: doc-freshness
     runs-on: ubuntu-latest
