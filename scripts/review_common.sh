@@ -66,6 +66,46 @@ require_plan() {
     fi
 }
 
+# Commit-time counterpart to require_plan(), meant to be called from
+# .githooks/pre-commit rather than from the push-time review scripts.
+# Compares the INDEX (what's about to become the new commit's tree) against
+# the merge-base, not the working tree -- untracked/unstaged files aren't
+# part of the commit being made, so (unlike require_plan()) those are
+# irrelevant here and deliberately not unioned in. Because the index already
+# reflects every earlier commit on this branch since the merge-base (not
+# just what's staged right now), this refuses a commit only if Plan.md has
+# never been touched on this branch at all, not merely in this one commit --
+# so a first commit that adds Plan.md, followed by later commits that
+# implement it, passes every one of those later commits too.
+#
+# Same pre-existing sharp edge as require_plan() (not introduced here, but
+# hit more often now that this runs on every commit instead of just at
+# push): a merge commit pulling unrelated main history into a long-lived
+# branch can make this see diffs in files the branch author never touched,
+# and refuse the merge unless Plan.md changed too.
+require_plan_staged() {
+    if [[ ! -f Plan.md ]]; then
+        echo "Plan.md not found at repo root. Add a Plan.md describing this branch's intended changes before committing anything else -- override once with SKIP_COMMIT_PLAN_CHECK=1 git commit ..." >&2
+        exit 1
+    fi
+
+    local merge_base
+    merge_base="$(review_merge_base)"
+
+    # `git diff --quiet` exits 0 (true) when there's NO difference -- so
+    # other_changed=1 here means "nothing outside Plan.md changed" and only
+    # flips to 0 once the `||` fires on a real diff. Same inverted-boolean
+    # convention require_plan() above already uses; kept consistent rather
+    # than diverging for this one function.
+    local other_changed=1
+    git diff --cached --quiet "$merge_base" -- . ':(exclude)Plan.md' || other_changed=0
+
+    if [[ "$other_changed" -eq 0 ]] && git diff --cached --quiet "$merge_base" -- Plan.md; then
+        echo "This commit (or an earlier one on this branch) changes files other than Plan.md, but Plan.md itself still reads identically to $BASE_REF. Write/update Plan.md to describe the change BEFORE committing it, not after -- override once with SKIP_COMMIT_PLAN_CHECK=1 git commit ..." >&2
+        exit 1
+    fi
+}
+
 # Resolve the GitHub issue this branch/PR is meant to close: explicit ISSUE
 # env var, else a "Closes #N" / "Fixes #N" / "Resolves #N" keyword in the open
 # PR body. Deliberately does NOT grep Plan.md prose for a bare "#N" -- a plan
