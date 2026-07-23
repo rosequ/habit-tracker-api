@@ -147,7 +147,10 @@ branch set out to do.
      lint` / `make test` / `make agent-review-local` (lint + `make smoke` +
      the Plan.md-coverage check) cleanly end-to-end and succeeded.
 
-Not yet exercised end-to-end: the pure-branch-deletion skip path (`git push
-origin --delete <branch>`) -- read through carefully against the same
-`while read`/`ZERO_SHA` pattern already proven correct for the main-push
-block, but not executed against a real remote as part of building this.
+6. The pure-branch-deletion skip path was exercised for real too: pushed a
+   disposable `throwaway-delete-test` branch, then `git push origin
+   --delete throwaway-delete-test` completed in ~1.2s with no
+   lint/test/agent-review-local output at all -- confirming the
+   `any_non_delete_ref` check correctly recognized every ref in that push
+   as a deletion and skipped verification entirely, rather than just
+   reading correctly on paper.
