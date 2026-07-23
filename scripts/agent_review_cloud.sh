@@ -71,7 +71,7 @@ VERDICT: REQUEST_CHANGES
 REVIEW_PROMPT_EOF_9f3a
 )"
 
-echo "==> Running isolated read-only reviewer subagent with $CLOUD_MODEL"
+echo "==> Running isolated read-only reviewer subagent with $CLOUD_MODEL (provider: ${AGENT_PROVIDER:-claude})"
 timestamp="$(date +%Y%m%d-%H%M%S)"
 out_file="$REVIEW_DIR/cloud-review-$timestamp.md"
 
@@ -79,11 +79,10 @@ out_file="$REVIEW_DIR/cloud-review-$timestamp.md"
 # with no memory of the implementer's session or any prior review run.
 # --tools "Read,Glob,Grep" hard-restricts the tool set to read-only -- Edit,
 # Write, and Bash are not in the list, so this reviewer cannot modify the
-# repository regardless of --permission-mode.
-claude -p \
-    --model "$CLOUD_MODEL" \
+# repository regardless of --permission-mode. See scripts/run_agent.sh for
+# provider dispatch (#15).
+CLAUDE_MODEL="$CLOUD_MODEL" bash scripts/run_agent.sh \
     --tools "Read,Glob,Grep" \
-    --permission-mode bypassPermissions \
     --system-prompt "$system_prompt" \
     <<< "$prompt" | tee "$out_file"
 

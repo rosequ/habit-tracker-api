@@ -20,6 +20,12 @@ on:
 env:
   DATABASE_URL: postgresql+asyncpg://habit:habit_dev_password@localhost:5432/habit_tracker
   APP_PORT: 8000
+  # Provider dispatch for scripts/run_agent.sh -- see #15. Defaults to
+  # 'claude' (today's behavior) whenever the repo variable isn't set. This
+  # workflow can auto-merge -- don't flip the repo variable to 'north' here
+  # without a real side-by-side quality comparison first (see
+  # docs/architecture/agent-providers.md).
+  AGENT_PROVIDER: ${{ vars.AGENT_PROVIDER || 'claude' }}
 
 permissions:
   contents: write
@@ -72,12 +78,10 @@ jobs:
           git config user.name "habit-tracker-agent"
           git config user.email "agent@users.noreply.github.com"
 
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
-
-      - name: Ask Claude Code to garden the docs
+      - name: Ask the agent to garden the docs
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           agents_md="$(cat AGENTS.md)"
           # Excludes docs/quality.md: it's off-limits to this workflow (see
@@ -130,10 +134,7 @@ jobs:
           DOCGARDENER_PROMPT_EOF_9f31
           )"
 
-          claude -p \
-            --model claude-sonnet-5 \
-            --permission-mode bypassPermissions \
-            <<< "$prompt"
+          bash scripts/run_agent.sh <<< "$prompt"
 
       - name: Check for changes
         id: changes

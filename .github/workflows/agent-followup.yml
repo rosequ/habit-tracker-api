@@ -20,6 +20,9 @@ env:
   # APP_PORT + 1000, same convention as .envrc locally.
   APP_PORT: 8000
   PR_NUMBER: ${{ inputs.pr_number }}
+  # Provider dispatch for scripts/run_agent.sh -- see #15. Defaults to
+  # 'claude' (today's behavior) whenever the repo variable isn't set.
+  AGENT_PROVIDER: ${{ vars.AGENT_PROVIDER || 'claude' }}
 
 permissions:
   contents: write
@@ -75,12 +78,10 @@ jobs:
           git config user.name "habit-tracker-agent"
           git config user.email "agent@users.noreply.github.com"
 
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
-
-      - name: Ask Claude Code to fix the failure
+      - name: Ask the agent to fix the failure
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           failure_log="$(cat /tmp/integration-failure.log)"
           pr_diff="$(cat /tmp/pr.diff)"
@@ -117,10 +118,7 @@ jobs:
           FOLLOWUP_PROMPT_EOF_7d2e
           )"
 
-          claude -p \
-            --model claude-sonnet-5 \
-            --permission-mode bypassPermissions \
-            <<< "$prompt"
+          bash scripts/run_agent.sh <<< "$prompt"
 
       - name: Push fix branch and open PR
         env:
