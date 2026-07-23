@@ -1,17 +1,5 @@
 # Plan: Configurable North Mini Code provider toggle (#15)
 
-## Stacked on PR #16 (unmerged)
-
-This branch is based on `recover-continuous-maintenance-fixes`
-(https://github.com/rosequ/habit-tracker-api/pull/16), not directly on
-`main` — that branch recovers a stranded commit of already-reviewed bug
-fixes to `doc-gardener.yml`/`garbage-collector.yml`/`quality-grader.yml`/
-`ci.yml`/`deploy.yml`/`scripts/gate_and_merge.sh`/
-`scripts/quality_report_data.sh` that this branch's own work also touches.
-Until #16 merges, a diff against `main` includes both PR #16's recovered
-fixes *and* this branch's new work below — see #16's own `Plan.md`/PR
-description for the former. This plan describes only what's new here.
-
 ## Context
 
 Issue #15 asks to evaluate replacing headless Claude Code with Cohere's
@@ -61,8 +49,15 @@ CLI."
 
 ## Out of scope
 
-- Actually flipping `AGENT_PROVIDER` to `north` anywhere by default —
-  nothing changes today's behavior; this only makes the switch possible.
+- Flipping `AGENT_PROVIDER` was deliberately left out of this diff itself —
+  this branch's code changes leave every workflow defaulting to `claude`
+  whenever the repository variable is unset. Since this PR was opened, the
+  `AGENT_PROVIDER` repository variable has separately been set to `north`
+  by explicit request (a GitHub Actions setting, not part of this diff or
+  the repo's tracked files) — see the PR description for that decision and
+  its risk tradeoff, since it now governs `doc-gardener.yml`/
+  `garbage-collector.yml`'s auto-merge behavior on a still-unverified
+  provider.
 - The Kimi K* swap proposed in #10 — `run_agent.sh`'s dispatch is generic
   enough that a third provider branch should follow the same shape later,
   but isn't added here.
