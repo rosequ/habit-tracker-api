@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Refuses to commit if `make lint` fails (ruff + import-linter + file-size --
-# all static, no DB/network needed, so this stays fast enough to run on
-# every commit without annoying friction). The heavier gate (tests, the
-# agent-review-local loop) lives in the pre-push hook instead, since that
-# fires far less often than individual commits. Enable both hooks together
-# with: git config core.hooksPath .githooks
+# Refuses to commit if `make lint` fails, or if this commit (or an earlier
+# one on this branch) changes a tracked file other than Plan.md while
+# Plan.md itself still reads identically to main -- both fast enough (no
+# DB/network) to run on every commit without annoying friction. The heavier
+# gate (tests, the agent-review-local loop) lives in the pre-push hook
+# instead, since that fires far less often than individual commits. Enable
+# both hooks together with: git config core.hooksPath .githooks
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -22,13 +23,23 @@ cd "$(git rev-parse --show-toplevel)"
 # ever grows a dependency that shells out to git the same way.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
 
-if [[ "${SKIP_COMMIT_LINT:-}" == "1" ]]; then
-    exit 0
+if [[ "${SKIP_COMMIT_LINT:-}" != "1" ]]; then
+    if ! make lint; then
+        echo "Refusing to commit -- make lint failed. Fix it, or override once with SKIP_COMMIT_LINT=1 git commit ..." >&2
+        exit 1
+    fi
 fi
 
-if ! make lint; then
-    echo "Refusing to commit -- make lint failed. Fix it, or override once with SKIP_COMMIT_LINT=1 git commit ..." >&2
-    exit 1
+# require_plan_staged (scripts/review_common.sh) mechanically enforces
+# "Plan.md before implementation": it refuses this commit if Plan.md hasn't
+# been touched anywhere on this branch yet, but some other tracked file has.
+# It cannot enforce true edit *order* within a single commit -- git has no
+# notion of that -- only that Plan.md was touched on this branch at all
+# before non-Plan.md changes can land. Separate flag from SKIP_COMMIT_LINT
+# since the two checks are independent.
+if [[ "${SKIP_COMMIT_PLAN_CHECK:-}" != "1" ]]; then
+    source scripts/review_common.sh
+    require_plan_staged
 fi
 
 exit 0
