@@ -22,6 +22,21 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
+# Git sets GIT_DIR (and can set GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR)
+# in a hook's environment when the hook runs inside a git worktree (it does
+# NOT do this for a plain, non-worktree repo -- confirmed directly).
+# Anything this hook spawns inherits that by default, including `make
+# test`/`make agent-review-local` -> pytest -> anything that itself shells
+# out to `git` in an isolated temp directory (e.g.
+# tests/test_check_file_sizes.py's own `git init`/`git add` in a pytest
+# tmp_path). Without unsetting these first, that "isolated" git repo isn't
+# isolated at all: its git commands resolve against THIS worktree's real
+# gitdir/index instead of the tmp directory, corrupting the real index --
+# reproduced this directly while building this hook. Same class of fix as
+# scripts/review_common.sh's unset of
+# CLAUDE_CODE_SESSION_ID/CLAUDE_CODE_CHILD_SESSION.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+
 ZERO_SHA="0000000000000000000000000000000000000000"
 any_non_delete_ref=0
 
