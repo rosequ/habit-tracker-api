@@ -70,11 +70,43 @@ meet a baseline," not `agent-review-cloud`.
    `SKIP_COMMIT_LINT=1 git commit` overrides it. All three matched expected
    behavior.
 4. `bash -n` on both hook scripts.
+5. `pre-push` was exercised for real, against the actual GitHub remote (this
+   branch's own push), not just read through. That real run surfaced two
+   genuine bugs neither `bash -n` nor reasoning about the script would have
+   caught:
+   - **`make test` failed with a missing `DATABASE_URL`.** `git push`
+     doesn't run inside direnv's normal shell-hook flow, so `.envrc`'s
+     exports aren't present for a bare `make test` call even though they
+     are for a human running the same target in an already-direnv-loaded
+     terminal -- the exact class of bug `make dev`/`make smoke` already hit
+     and fixed by routing through `direnv exec .`. Fixed the same way.
+   - **Worse: `make test` (before that fix) silently corrupted this
+     worktree's own git index.** In a git *worktree* specifically (verified
+     this doesn't happen in a plain, non-worktree repo), git sets `GIT_DIR`
+     in a hook's environment, and it leaks into any subprocess the hook
+     spawns -- including `tests/test_check_file_sizes.py`'s own supposedly-
+     isolated `git init`/`git add` calls in a pytest `tmp_path`, which then
+     silently mutated the real worktree's index instead of an isolated one.
+     Reproduced this directly (with `GIT_DIR` set: corrupts; unset: clean)
+     to confirm causation before fixing, and recovered the one real
+     corruption incident cleanly with `git reset` (working tree content was
+     never touched, only the index -- confirmed via `git show HEAD:<path>`
+     matching disk before resetting). Fixed by unsetting
+     `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_COMMON_DIR` at the top
+     of both hooks.
+   - Also found: `make agent-review-local`'s own `make smoke` step needs
+     `DB_PORT`/`PROMETHEUS_PORT` for its `docker-compose up -d` call too --
+     `scripts/smoke_test.sh` only routes its *uvicorn* invocation through
+     `direnv exec .` internally, not `docker-compose`. Without this, that
+     call fell back to default ports and collided with another worktree's
+     already-running containers. Fixed by routing all three `make` calls in
+     `pre-push` (`lint`, `test`, `agent-review-local`) through `direnv exec
+     .` uniformly, rather than cherry-picking which ones "need" it.
+   - After all three fixes, a real `git push` of this branch ran `make
+     lint` / `make test` / `make agent-review-local` (lint + `make smoke` +
+     the Plan.md-coverage check) cleanly end-to-end and succeeded.
 
-Not yet exercised end-to-end: the `pre-push` hook's `make test`/
-`make agent-review-local` path (needs a real push to a remote to trigger,
-which wasn't done as part of building this) and the pure-branch-deletion
-skip path. Both are small, direct extensions of the same `while read`
-loop/override pattern already validated for `pre-commit` and the existing
-`ALLOW_PUSH_TO_MAIN` block, and were read through carefully rather than
-executed against a real remote.
+Not yet exercised end-to-end: the pure-branch-deletion skip path (`git push
+origin --delete <branch>`) -- read through carefully against the same
+`while read`/`ZERO_SHA` pattern already proven correct for the main-push
+block, but not executed against a real remote as part of building this.
