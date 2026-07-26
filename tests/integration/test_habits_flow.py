@@ -1,7 +1,18 @@
 from httpx import AsyncClient
 
 
-async def test_create_habit_returns_201_and_persists(client: AsyncClient) -> None:
+async def test_health_endpoint_returns_status_and_version(client: AsyncClient) -> None:
+    response = await client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "status" in body
+    assert body["status"] == "ok"
+    assert "version" in body
+    assert body["version"] == "0.1.0"
+
+
+async def _create_habit(client: AsyncClient) -> int:
     payload = {"name": "Read", "daily_target": 10, "category": "Learning"}
 
     create_response = await client.post("/habits", json=payload)

@@ -23,4 +23,4 @@ Instrumentator().add(metrics.requests()).add(metrics.latency()).instrument(app).
 @app.get("/health")
 async def health(session: Annotated[AsyncSession, Depends(get_session)]) -> dict[str, str]:
     await session.execute(text("SELECT 1"))
-    return {"status": "ok"}
+    return {"status": "ok", "version": "0.1.0"}
