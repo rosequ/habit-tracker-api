@@ -28,3 +28,19 @@ async def test_create_habit_with_invalid_payload_returns_422(client: AsyncClient
     assert response.status_code == 422
     body = response.json()
     assert any(error["loc"][-1] == "name" for error in body["detail"])
+
+
+async def test_list_habits_returns_created_habits(client: AsyncClient) -> None:
+    empty_response = await client.get("/habits")
+    assert empty_response.status_code == 200
+    assert empty_response.json() == []
+
+    create_response = await client.post(
+        "/habits", json={"name": "Read", "daily_target": 10, "category": "Learning"}
+    )
+    created = create_response.json()
+
+    list_response = await client.get("/habits")
+
+    assert list_response.status_code == 200
+    assert list_response.json() == [created]
