@@ -1,74 +1,93 @@
-# Plan: Add `make ui-smoke` — Playwright check against the Swagger UI (#29)
+# Plan: Add a minimal habits dashboard for agent-browser QA (#36)
 
 ## Context
 
-`make smoke` boots the real app and hits `/health` with curl, but nothing
-exercises the app the way a human actually browses it: FastAPI's
-auto-generated Swagger UI at `/docs` (built from `/openapi.json`). A broken
-schema, a JS console error, or a route that renders in the UI but 500s when
-"Try it out" is used wouldn't be caught by `make lint`, `make test`, or
-`make smoke` — all non-browser.
+The only "UI" this API has today is FastAPI's auto-generated Swagger page
+at `/docs` (see #35/#29). That's fine for exercising individual endpoints
+in isolation, but there's nothing a browser-automation agent can click
+through the way an actual user would: fill a form, submit, watch a list
+update, mark something done. All the backend pieces this issue needs
+already exist and are merged to `main` (`POST /habits`, `GET /habits`,
+`GET /habits/{id}`, `POST /habits/{id}/completions`).
 
-Issue #29 raised three open questions and left them for the repo owner to
-resolve rather than guessing. They've since been confirmed; recording the
-decisions and the "why" here per this repo's convention for ADR-worthy calls:
-
-1. **Tooling: Playwright, driven directly (Python).** Added as a dev
-   dependency rather than reaching for an MCP-based browser tool. No new
-   external service or config to run/maintain, and it stays fully
-   deterministic and local — same shape as the rest of this repo's
-   verification tooling (pytest, ruff, etc. are all plain Python deps too).
-2. **Scope: local-only `make` target, not wired into CI.** Adds
-   `make ui-smoke`, analogous to `make smoke`, but does NOT touch
-   `.github/workflows/*` — headless-browser binaries are a heavier CI
-   dependency than this issue is scoped to justify, and the issue explicitly
-   called CI wiring a separate decision.
-3. **Blocking: N/A.** Since it's local-only for now, there's nothing in CI
-   for it to block; it's an opt-in check a developer runs like `make smoke`.
+A sibling issue, #37 ("require agent-browser screenshot proof for any PR
+that touches UI"), is being implemented concurrently in a separate
+worktree. It's building a generic, reusable Playwright screenshot-capture
+helper meant to be shared across UI checks eventually. This branch does
+**not** wait for or depend on that work -- it implements its own
+self-contained screenshot capture inside `scripts/ui_smoke_check.py`. A
+human reconciles the two at merge time; not this branch's job.
 
 ## What this branch changes
 
-- **`pyproject.toml`** — adds `playwright` to `[dependency-groups].dev`.
-- **`scripts/ui_smoke.sh`** — new script, modeled directly on
-  `scripts/smoke_test.sh`: boots docker-compose + a real uvicorn on its own
-  port (`UI_SMOKE_PORT`, default `8099` — distinct from both `APP_PORT` and
-  `SMOKE_PORT` so none of the three collide if run together), waits for
-  `/health`, then runs a Playwright script that:
-  1. Loads `/docs` headless and asserts it doesn't throw a browser console
-     error.
-  2. Asserts the rendered page lists the routes we expect (`/health`,
-     `/habits`).
-  3. Drives Swagger UI's "Try it out" on `GET /health` and asserts a real
-     `200` with `"status":"ok"` comes back through the browser, not just
-     from a direct HTTP call — this is the part `make smoke` structurally
-     can't check, since it only ever calls the API directly.
-  4. Tears down the uvicorn process on exit (`trap ... EXIT`), same pattern
-     as `smoke_test.sh`.
-- **`scripts/ui_smoke_check.py`** — the actual Playwright driver script
-  invoked by `ui_smoke.sh` (kept separate from the bash wrapper since the
-  browser automation itself is Python, matching how the rest of this repo's
-  scripts split shell orchestration from Python logic where relevant).
-- **`Makefile`** — new `ui-smoke` target calling `scripts/ui_smoke.sh`, plus
-  a comment matching the style of the existing `smoke` target.
-- **`AGENTS.md`** — documents `make ui-smoke` next to `make smoke` in "How to
-  verify your work", including that it needs
-  `uv run playwright install chromium` once (browser binaries aren't a
-  Python dependency `uv sync` can fetch on its own).
+- **`app/static/index.html`** -- new, vanilla HTML/JS dashboard, no build
+  step, no framework, no external dependencies (per the issue's explicit
+  scope). On load, fetches `GET /habits` and renders each as a card (name,
+  category, daily target). A form posts to `POST /habits` and appends the
+  new habit to the DOM directly from the response -- no page reload, no
+  re-fetch of the whole list. Each habit card has a "Mark done today"
+  button that posts to `POST /habits/{id}/completions` with an empty body
+  (the API defaults `completion_date` to today server-side) and reflects
+  the result inline: green "Done today ✓" on 201, amber "Already done
+  today" on the existing 409, or a red error message otherwise (also used
+  for 422s from the add-habit form, using the same field-level `detail`
+  shape `app/schemas/` already returns).
+- **`app/main.py`** -- mounts `app/static/` at `/dashboard` via
+  `fastapi.staticfiles.StaticFiles(..., html=True)`, so `GET /dashboard`
+  serves `index.html`. This is the only backend change: no new
+  `app/routes/`, `app/services/`, `app/repository/`, or `app/db/` code, no
+  new business logic -- purely an additive static mount, same
+  layering-neutral pattern `/health` already uses directly in `main.py`.
+- **`tests/test_dashboard.py`** -- two focused tests: the dashboard route
+  serves HTML containing the add-habit form and habit list (both with and
+  without the trailing slash StaticFiles redirects to). Deliberately not
+  testing markup/styling beyond "the hooks the JS and Playwright rely on
+  exist" -- the interactive behavior itself is exercised by `make
+  ui-smoke`, not `make test`, since it needs a real browser.
+- **`scripts/ui_smoke_check.py`** -- refactored the existing `/docs` check
+  into `check_docs()` (unchanged behavior) and added a new `check_dashboard()`:
+  loads `/dashboard`, screenshots the empty/loaded state, fills and submits
+  the add-habit form, waits for the new habit to appear in the DOM (asserts
+  no reload occurred and no error banner shown), screenshots that state,
+  clicks "Mark done today", waits for the green success text, and takes a
+  third screenshot. Each check uses its own `Page` (and its own
+  console-error listener) so a JS error on one page can't be misattributed
+  to the other. Screenshots land in `artifacts/ui-smoke/` (new, gitignored
+  -- see `.gitignore`) as this issue's "proof of work": generated by the
+  same Playwright run `make ui-smoke` runs, not taken by hand.
+- **`scripts/ui_smoke.sh`** -- added `alembic upgrade head` right after
+  `docker-compose up -d`. `make smoke`/the old `/docs`-only check never
+  needed this since `/health` only runs `SELECT 1`, but the dashboard check
+  does real `POST /habits`/`POST .../completions` calls that need the
+  actual tables to exist.
+- **`Makefile`** / **`AGENTS.md`** -- updated the `ui-smoke` descriptions to
+  mention the dashboard check and the screenshot artifacts directory.
+- **`.gitignore`** -- added `artifacts/` (the screenshot output directory;
+  regenerated per run, not checked in).
+- **`.envrc`** (gitignored, per-worktree, not part of this diff) -- set
+  `DB_PORT=5536` / `APP_PORT=8136` / `PROMETHEUS_PORT=9136` for this
+  worktree, since every port in the low 5430s/9090s/8000s range was already
+  claimed by other concurrently-running worktrees on this machine.
 
-## Out of scope
+## Out of scope (per the issue)
 
-- Wiring this into `.github/workflows/*` or `ci.yml` (resolved above — a
-  deliberate non-goal of this issue).
-- Evaluating MCP-based browser tooling (resolved above).
-- Exercising any endpoint beyond one read-only GET through "Try it out" —
-  issue #29 only asked for "at least one."
-- Issues #25/#26/#27/#28, worked in sibling worktrees.
+- Editing/deleting habits, filtering, streaks/charts, auth, styling
+  polish.
+- Wiring `ui-smoke` into CI (stays local-only, same as #29's resolved
+  scope).
+- Coordinating with #37's in-progress generic screenshot helper -- this
+  branch's capture code is self-contained and may be superseded/refactored
+  when #37 lands; that reconciliation is explicitly a human's job at merge
+  time, not this branch's.
 
 ## Verification
 
-- `make lint` — passes.
-- `make test` — unaffected, still passes.
-- `make ui-smoke` — new target, run directly to confirm it passes against a
-  real local boot (requires `uv run playwright install chromium` once,
-  first time).
+- `make lint` -- passes (ruff, import-linter layering contract, file-size
+  check).
+- `make test` -- passes, including the two new `tests/test_dashboard.py`
+  tests.
+- `make ui-smoke` -- passes: both the pre-existing `/docs` check and the
+  new `/dashboard` check (form fill/submit, list update without reload,
+  "Mark done today" success state), screenshots written to
+  `artifacts/ui-smoke/`.
 - `make agent-review-local` / `make agent-review-cloud` before push/PR.
