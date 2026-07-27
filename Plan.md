@@ -21,8 +21,10 @@ does today.
   mechanical enforcement must not be weakened.
 
 ## What actually changes
-Only the prompt text embedded in `.github/workflows/doc-gardener.yml`
-(the `Ask the agent to garden the docs` step):
+Only `.github/workflows/doc-gardener.yml`: the prompt text embedded in the
+`Ask the agent to garden the docs` step, plus the file's top-of-file
+descriptive comment (kept in sync with the new behavior, same as it
+already documents the rest of the job):
 - Add a new paragraph telling the agent to treat any `docs/adr/*.md` file
   whose front matter says `Status: Accepted` as an additional
   authoritative source (alongside the actual code) when checking
