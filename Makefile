@@ -15,7 +15,8 @@ smoke:
 # dashboard (/dashboard) instead of curl-ing /health directly -- catches a
 # broken UI render, or a route/form that 500s via "Try it out" / the
 # add-habit form / "Mark done today", that no other check exercises.
-# Screenshots of the dashboard flow land in artifacts/ui-smoke/ (gitignored).
+# Screenshots of both flows (via scripts/ui_smoke_common.py's
+# capture_screenshot()) land in .ui-smoke-artifacts/ (gitignored).
 # Local-only (not wired into CI); requires
 # `uv run playwright install chromium` once beforehand.
 ui-smoke:

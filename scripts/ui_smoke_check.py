@@ -12,21 +12,26 @@ be misattributed to the other):
 2. `check_dashboard` -- drives the actual habits dashboard (/dashboard,
    issue #36): fills and submits the add-habit form, confirms the new habit
    appears without a page reload, then clicks "Mark done today" and
-   confirms the UI reflects success. Screenshots are captured before/after
-   adding a habit and after marking one done, saved under
-   ARTIFACTS_DIR -- see issue #36's "proof of work" requirement; these are
-   what get attached to the PR, not a manually-taken screenshot.
+   confirms the UI reflects success.
+
+Both checks capture screenshots via `ui_smoke_common.capture_screenshot`,
+which writes timestamped PNGs under `ui_smoke_common.ARTIFACTS_DIR`
+(`.ui-smoke-artifacts/`, git-ignored) -- see AGENTS.md's "How to verify
+your work" for why: this is the visual proof-of-work attached to UI-touching
+PRs, not a manually-taken screenshot.
 """
 
 import sys
 import time
-from pathlib import Path
 
 from playwright.sync_api import Browser, Page, sync_playwright
 
-EXPECTED_ROUTES = ["/health", "/habits"]
+import ui_smoke_common
+from ui_smoke_common import capture_screenshot
 
-ARTIFACTS_DIR = Path(__file__).resolve().parents[1] / "artifacts" / "ui-smoke"
+EXPECTED_ROUTES = ["/health", "/habits"]
+CHECK_NAME_DOCS = "docs"
+CHECK_NAME_DASHBOARD = "dashboard"
 
 
 def check_docs(browser: Browser, base_url: str) -> int:
@@ -51,6 +56,9 @@ def check_docs(browser: Browser, base_url: str) -> int:
             print(f"ui_smoke: FAIL -- expected route '{route}' not found on /docs", file=sys.stderr)
             page.close()
             return 1
+
+    loaded_screenshot = capture_screenshot(page, CHECK_NAME_DOCS, "loaded")
+    print(f"ui_smoke: screenshot saved to {loaded_screenshot}")
 
     # Swagger UI's DOM id for an untagged operation is
     # "operations-default-<operationId>" -- FastAPI's operationId for
@@ -90,6 +98,9 @@ def check_docs(browser: Browser, base_url: str) -> int:
         page.close()
         return 1
 
+    try_it_out_screenshot = capture_screenshot(page, CHECK_NAME_DOCS, "try-it-out")
+    print(f"ui_smoke: screenshot saved to {try_it_out_screenshot}")
+
     page.close()
     print("ui_smoke: PASS (/docs rendered, expected routes present, Try it out on GET /health returned a real response)")
     return 0
@@ -107,7 +118,6 @@ def check_dashboard(browser: Browser, base_url: str) -> int:
         lambda msg: console_errors.append(msg.text) if msg.type == "error" else None,
     )
 
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     # Unique per run so re-running ui-smoke against a persistent local DB
     # (this script never tears down/resets data -- ui_smoke.sh only tears
     # down the uvicorn process) can't collide with a habit an earlier run
@@ -130,7 +140,8 @@ def check_dashboard(browser: Browser, base_url: str) -> int:
         page.close()
         return 1
 
-    page.screenshot(path=str(ARTIFACTS_DIR / "01-dashboard-before-add.png"), full_page=True)
+    before_screenshot = capture_screenshot(page, CHECK_NAME_DASHBOARD, "before-add")
+    print(f"ui_smoke: screenshot saved to {before_screenshot}")
 
     page.fill("#habit-name-input", habit_name)
     page.fill("#habit-daily-target-input", "3")
@@ -155,7 +166,8 @@ def check_dashboard(browser: Browser, base_url: str) -> int:
         page.close()
         return 1
 
-    page.screenshot(path=str(ARTIFACTS_DIR / "02-dashboard-after-add.png"), full_page=True)
+    after_screenshot = capture_screenshot(page, CHECK_NAME_DASHBOARD, "after-add")
+    print(f"ui_smoke: screenshot saved to {after_screenshot}")
 
     new_habit.locator(".mark-done-btn").click()
     status = new_habit.locator(".completion-status")
@@ -170,7 +182,8 @@ def check_dashboard(browser: Browser, base_url: str) -> int:
         page.close()
         return 1
 
-    page.screenshot(path=str(ARTIFACTS_DIR / "03-habit-marked-done.png"), full_page=True)
+    marked_done_screenshot = capture_screenshot(page, CHECK_NAME_DASHBOARD, "marked-done")
+    print(f"ui_smoke: screenshot saved to {marked_done_screenshot}")
 
     if console_errors:
         print(f"ui_smoke: FAIL -- browser console errors driving /dashboard: {console_errors}", file=sys.stderr)
@@ -180,7 +193,7 @@ def check_dashboard(browser: Browser, base_url: str) -> int:
     page.close()
     print(
         "ui_smoke: PASS (/dashboard listed real habits, add-habit form created one live, "
-        f"'Mark done today' reflected success -- screenshots in {ARTIFACTS_DIR})"
+        f"'Mark done today' reflected success -- screenshots in {ui_smoke_common.ARTIFACTS_DIR})"
     )
     return 0
 

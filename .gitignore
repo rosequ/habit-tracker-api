@@ -24,5 +24,6 @@ htmlcov/
 # agent-review-cloud output
 .agent-review/
 
-# make ui-smoke screenshots (proof-of-work artifacts, regenerated per run)
-artifacts/
+# make ui-smoke screenshot artifacts (scripts/ui_smoke_common.py) -- local
+# proof-of-work for UI-touching PRs, never committed (#37)
+.ui-smoke-artifacts/
