@@ -31,6 +31,15 @@ Note: The `completions` domain is documented in `docs/domains/habits/README.md` 
   not up, a stale process still bound to the port -- that a text-only diff
   review can never see, because they only manifest by actually running the
   command.
+- `make ui-smoke` — boots the app the same way `make smoke` does, then drives
+  a real headless Playwright browser against the Swagger UI (`/docs`)
+  instead of curl-ing `/health` directly: confirms the page renders with no
+  console errors, lists the expected routes, and that "Try it out" on
+  `GET /health` returns a real response through the browser. Catches a
+  broken UI render or a route that renders but 500s via "Try it out" --
+  neither `make smoke` nor any other check here drives a real browser.
+  Local-only, not wired into CI (issue #29). Needs
+  `uv run playwright install chromium` once before first use.
 - `make lint`  — ruff + import-linter + file-size check; read the error, it tells you the fix
 - `make agent-review-local` — fast/cheap: lint + smoke + flags diff not covered by Plan.md
 - `make agent-review-cloud` — deeper: an isolated read-only reviewer checks the diff
