@@ -1,74 +1,61 @@
-# Plan: Add `make ui-smoke` — Playwright check against the Swagger UI (#29)
+# Plan: Add description/version to FastAPI app metadata (#35)
 
 ## Context
 
-`make smoke` boots the real app and hits `/health` with curl, but nothing
-exercises the app the way a human actually browses it: FastAPI's
-auto-generated Swagger UI at `/docs` (built from `/openapi.json`). A broken
-schema, a JS console error, or a route that renders in the UI but 500s when
-"Try it out" is used wouldn't be caught by `make lint`, `make test`, or
-`make smoke` — all non-browser.
-
-Issue #29 raised three open questions and left them for the repo owner to
-resolve rather than guessing. They've since been confirmed; recording the
-decisions and the "why" here per this repo's convention for ADR-worthy calls:
-
-1. **Tooling: Playwright, driven directly (Python).** Added as a dev
-   dependency rather than reaching for an MCP-based browser tool. No new
-   external service or config to run/maintain, and it stays fully
-   deterministic and local — same shape as the rest of this repo's
-   verification tooling (pytest, ruff, etc. are all plain Python deps too).
-2. **Scope: local-only `make` target, not wired into CI.** Adds
-   `make ui-smoke`, analogous to `make smoke`, but does NOT touch
-   `.github/workflows/*` — headless-browser binaries are a heavier CI
-   dependency than this issue is scoped to justify, and the issue explicitly
-   called CI wiring a separate decision.
-3. **Blocking: N/A.** Since it's local-only for now, there's nothing in CI
-   for it to block; it's an opt-in check a developer runs like `make smoke`.
+`app/main.py:11` currently constructs the app as
+`FastAPI(title="Habit Tracker API")` -- no `description` or `version`.
+Swagger UI at `/docs` renders whatever's passed to `FastAPI(...)`'s
+`title`/`description`/`version`, so today the docs header shows a bare
+title with no description block and no version badge.
 
 ## What this branch changes
 
-- **`pyproject.toml`** — adds `playwright` to `[dependency-groups].dev`.
-- **`scripts/ui_smoke.sh`** — new script, modeled directly on
-  `scripts/smoke_test.sh`: boots docker-compose + a real uvicorn on its own
-  port (`UI_SMOKE_PORT`, default `8099` — distinct from both `APP_PORT` and
-  `SMOKE_PORT` so none of the three collide if run together), waits for
-  `/health`, then runs a Playwright script that:
-  1. Loads `/docs` headless and asserts it doesn't throw a browser console
-     error.
-  2. Asserts the rendered page lists the routes we expect (`/health`,
-     `/habits`).
-  3. Drives Swagger UI's "Try it out" on `GET /health` and asserts a real
-     `200` with `"status":"ok"` comes back through the browser, not just
-     from a direct HTTP call — this is the part `make smoke` structurally
-     can't check, since it only ever calls the API directly.
-  4. Tears down the uvicorn process on exit (`trap ... EXIT`), same pattern
-     as `smoke_test.sh`.
-- **`scripts/ui_smoke_check.py`** — the actual Playwright driver script
-  invoked by `ui_smoke.sh` (kept separate from the bash wrapper since the
-  browser automation itself is Python, matching how the rest of this repo's
-  scripts split shell orchestration from Python logic where relevant).
-- **`Makefile`** — new `ui-smoke` target calling `scripts/ui_smoke.sh`, plus
-  a comment matching the style of the existing `smoke` target.
-- **`AGENTS.md`** — documents `make ui-smoke` next to `make smoke` in "How to
-  verify your work", including that it needs
-  `uv run playwright install chromium` once (browser binaries aren't a
-  Python dependency `uv sync` can fetch on its own).
+- **`app/main.py`** -- pass `description` and `version` to the `FastAPI(...)`
+  constructor alongside the existing `title`:
+  - `version="0.1.0"` -- hardcoded, matching the precedent set in #8; no real
+    semantic-versioning scheme exists yet (explicitly out of scope per #35).
+  - `description="Track habits and their daily completions."` -- a short,
+    real sentence describing the API, not a placeholder.
+  - No other constructor arguments, routes, or behavior change.
+- **`tests/test_main.py`** -- new unit test asserting `app.title`,
+  `app.version`, and `app.description` on the imported FastAPI `app` object,
+  so a future accidental revert of this metadata is caught by `make test`
+  without needing a browser.
+- **`scripts/ui_smoke_check.py`** -- accepts an optional third CLI arg
+  (screenshot output path). When given, after `/docs` loads and passes the
+  existing console-error check, it takes a Playwright screenshot scoped to
+  Swagger UI's `.information-container` (the title/version-badge/description
+  block this change affects) and saves it to that path. Purely additive:
+  omitting the arg (as `make ui-smoke`'s default invocation does) leaves
+  existing pass/fail behavior unchanged.
+- **`scripts/ui_smoke.sh`** -- reads an optional `UI_SMOKE_SCREENSHOT` env
+  var and forwards it as that third arg to `ui_smoke_check.py`.
 
-## Out of scope
+## Why the screenshot capability
 
-- Wiring this into `.github/workflows/*` or `ci.yml` (resolved above — a
-  deliberate non-goal of this issue).
-- Evaluating MCP-based browser tooling (resolved above).
-- Exercising any endpoint beyond one read-only GET through "Try it out" —
-  issue #29 only asked for "at least one."
-- Issues #25/#26/#27/#28, worked in sibling worktrees.
+#35 asks that this PR "actually look at the rendered page" rather than only
+inspecting `/openapi.json`, and specifically calls out extending the
+existing `make ui-smoke` Playwright tooling (from #29) to capture a
+screenshot of the rendered `/docs` header as proof of work, rather than
+relying on a pass/fail assertion alone. The optional-arg approach keeps
+`make ui-smoke`'s default CI-equivalent behavior (used for pass/fail gating)
+identical, while making the screenshot capability reusable instead of a
+one-off throwaway script -- this PR's description includes before/after
+screenshots produced by running it against `main` and against this branch.
+
+## Out of scope (per #35)
+
+- A real semantic-versioning scheme.
+- Wiring `make ui-smoke` (or the new screenshot option) into CI -- it
+  remains local-only, per #29's resolved open questions.
+- Any route behavior change -- only `FastAPI(...)`'s constructor arguments
+  and the `ui-smoke` tooling change.
 
 ## Verification
 
-- `make lint` — passes.
-- `make test` — unaffected, still passes.
-- `make ui-smoke` — new target, run directly to confirm it passes against a
-  real local boot (requires `uv run playwright install chromium` once,
-  first time).
-- `make agent-review-local` / `make agent-review-cloud` before push/PR.
+- `make lint` -- passes.
+- `make test` -- includes the new `tests/test_main.py`.
+- `make agent-review-local` before push.
+- `make ui-smoke` run manually with `UI_SMOKE_SCREENSHOT` set, once against
+  `main` and once against this branch, to produce the before/after images
+  attached to this PR's description.
