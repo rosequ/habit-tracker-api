@@ -57,5 +57,8 @@ screenshots produced by running it against `main` and against this branch.
 - `make test` -- includes the new `tests/test_main.py`.
 - `make agent-review-local` before push.
 - `make ui-smoke` run manually with `UI_SMOKE_SCREENSHOT` set, once against
-  `main` and once against this branch, to produce the before/after images
-  attached to this PR's description.
+  `main` (in a disposable worktree) and once against this branch, to produce
+  the before/after images committed to `docs/screenshots/issue-35/` and
+  embedded in this PR's description via a `raw.githubusercontent.com` link
+  pinned to this branch's pushed commit SHA -- GitHub PR bodies can't inline
+  a local, un-pushed file.
