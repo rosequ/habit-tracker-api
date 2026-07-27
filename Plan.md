@@ -38,6 +38,12 @@ private/Free-tier and GitHub's server-side branch protection 403s
 small section) noting that new architecture decisions get recorded as an
 ADR in `docs/adr/` going forward, referencing the template.
 
+**`.gitignore`** — add `/TASK.md` alongside the existing "Claude Code local
+state" entries: this worktree came with an untracked `TASK.md` (the task
+briefing dropped in by the harness, not project content), which the
+review scripts' untracked-file union would otherwise flag as unplanned
+scope on every run in this worktree.
+
 ## Out of scope
 
 - Converting every historical decision into an ADR retroactively — just
