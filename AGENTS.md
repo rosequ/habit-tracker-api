@@ -54,18 +54,20 @@ address comments -> repeat.
 This is a private repo on GitHub's Free plan, which doesn't support server-side
 branch protection at all (see issue #7) -- there is nothing stopping a direct
 `git push` to `main`, or a push of any branch that skips lint/tests/review.
-As a stopgap, run `git config core.hooksPath .githooks` once per clone: it
-installs two client-side hooks (still bypassable locally -- `--no-verify`,
-or just not enabling `core.hooksPath` -- same limitation as the branch
-protection gap above):
+As a stopgap (see [ADR 0003](docs/adr/0003-client-side-hooks-branch-protection-stopgap.md)
+for the full decision record), run `git config core.hooksPath .githooks`
+once per clone: it installs two client-side hooks (still bypassable
+locally -- `--no-verify`, or just not enabling `core.hooksPath` -- same
+limitation as the branch protection gap above):
 - `pre-commit` — refuses to commit if `make lint` fails (override once with
   `SKIP_COMMIT_LINT=1 git commit ...`), and separately refuses to commit any
   tracked file other than `Plan.md` unless `Plan.md` has *already* been
   touched somewhere on this branch (this commit or an earlier one) --
   mechanically enforces writing/updating the plan before implementing,
   not backfilling it afterward, though it can't check the plan's content is
-  actually accurate (that's `agent-review-local`'s job, at push time).
-  Override once with `SKIP_COMMIT_PLAN_CHECK=1 git commit ...`.
+  actually accurate (that's `agent-review-local`'s job, at push time). See
+  [ADR 0002](docs/adr/0002-plan-md-precommit-gate.md) for why this gate
+  exists. Override once with `SKIP_COMMIT_PLAN_CHECK=1 git commit ...`.
 - `pre-push` — refuses to push directly to `main` (override once with
   `ALLOW_PUSH_TO_MAIN=1 git push ...` if you really mean to; only bypasses
   the main-push block, not the check below). Separately, refuses to push

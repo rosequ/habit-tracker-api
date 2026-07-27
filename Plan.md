@@ -36,7 +36,14 @@ private/Free-tier and GitHub's server-side branch protection 403s
 
 **`AGENTS.md`** — add a short pointer under "Where things live" (or a new
 small section) noting that new architecture decisions get recorded as an
-ADR in `docs/adr/` going forward, referencing the template.
+ADR in `docs/adr/` going forward, referencing the template. Also
+cross-link the existing "Branching" section's pre-commit-gate and
+branch-protection-stopgap prose to ADRs 0002/0003, per
+`agent-review-cloud`'s non-blocking suggestion, so the backfilled ADRs are
+discoverable from the original prose, not only from `docs/adr/README.md`.
+
+**`docs/architecture/agent-providers.md`** — add a one-line cross-reference
+to ADR 0001, same reasoning as above.
 
 **`.gitignore`** — add `/TASK.md` alongside the existing "Claude Code local
 state" entries: this worktree came with an untracked `TASK.md` (the task
