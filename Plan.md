@@ -68,6 +68,13 @@ human reconciles the two at merge time; not this branch's job.
   `DB_PORT=5536` / `APP_PORT=8136` / `PROMETHEUS_PORT=9136` for this
   worktree, since every port in the low 5430s/9090s/8000s range was already
   claimed by other concurrently-running worktrees on this machine.
+- **`docs/screenshots/issue-36/`** -- the three PNGs `make ui-smoke`
+  produced in `artifacts/ui-smoke/` (before-add / after-add / marked-done)
+  copied here and committed once, specifically so the PR description for
+  #36 can embed them via a `raw.githubusercontent.com` URL -- GitHub PR
+  bodies can't inline a local, gitignored file. This directory is a
+  one-time proof-of-work snapshot, not a regenerated-per-run artifact
+  directory like `artifacts/ui-smoke/` (still gitignored, unchanged).
 
 ## Out of scope (per the issue)
 
