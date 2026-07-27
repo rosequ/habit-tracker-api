@@ -44,7 +44,10 @@ def main() -> int:
         # Swagger UI's DOM id for an untagged operation is
         # "operations-default-<operationId>" -- FastAPI's operationId for
         # `GET /health` (no `tags=`) is "health_health_get" (confirmed via
-        # /openapi.json), not a guessable "<path>_<method>" shorthand.
+        # /openapi.json), not a guessable "<path>_<method>" shorthand. This
+        # id, and the response-table classes below, are internal to the
+        # swagger-ui bundle FastAPI vendors -- re-check both if `make
+        # ui-smoke` starts failing after a FastAPI upgrade.
         health_op = page.locator("#operations-default-health_health_get")
         health_op.click()
         health_op.get_by_role("button", name="Try it out").click()

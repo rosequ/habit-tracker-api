@@ -27,6 +27,11 @@ if lsof -nP -iTCP:"$UI_SMOKE_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 echo "==> docker-compose up -d"
+# Deliberately `direnv exec .` here, unlike smoke_test.sh's plain
+# `docker-compose up -d`: without it, docker-compose falls back to
+# docker-compose.yml's default ports (5432/9090) instead of this worktree's
+# .envrc ones, which collides with any other worktree's stack already
+# running on those defaults.
 direnv exec . docker-compose up -d
 
 UVICORN_PID=""
