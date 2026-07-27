@@ -70,6 +70,13 @@ this further, but rejected it:
   issue number parsed from branch name, slug fallback to the `Plan.md`
   heading when the branch name has no descriptive part, explicit slug
   argument override, and `Implement.md` being included when present.
+- **`.gitignore`** — added `TASK.md` (this session's harness-injected task
+  briefing, untracked in every parallel worktree for this batch of issues).
+  `agent-review-local`/`agent-review-cloud`'s diff check deliberately unions
+  in untracked files so a forgotten `git add` can't hide scope
+  (`review_full_diff` in `scripts/review_common.sh`) — without this, that
+  file trips the check as an "unplanned" untracked addition even though it
+  was never meant to be committed by any of the sibling sessions either.
 
 ## Out of scope
 
