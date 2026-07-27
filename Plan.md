@@ -1,43 +1,55 @@
-# Plan: Implement GET /habits (issue #19), fixing an incomplete automated attempt
+# Plan: Introduce docs/adr/ (Architecture Decision Records) (issue #26)
 
 ## Context
 
-Issue #19 ("Add GET /habits to list all habits") was labeled `agent-ready`
-and picked up by `agent-ticket.yml`. The automated run committed only a
-`HabitRepository.get_all()` method — buggy (`F821 Undefined name 'session'`,
-plus use of the legacy sync SQLAlchemy 1.x `Query` API instead of the async
-`select()` style used elsewhere in this repo) and, more significantly,
-never wired to a route or service, so `GET /habits` didn't actually exist.
-`fast-gates` caught the lint error; manual inspection caught the missing
-route/service/tests once lint was fixed and the PR was reviewed.
+Real architecture decisions already exist in this repo (the
+`AGENT_PROVIDER`/`AGENT_PROVIDER_AUTOMERGE` split, the `Plan.md`-before-
+implementation pre-commit gate, the client-side-hooks stopgap for branch
+protection) but they're only documented as prose scattered across
+`AGENTS.md` and `docs/architecture/agent-providers.md`, or not documented
+in a structured way at all. There's also no lightweight format for
+recording *future* decisions, so "explain the why in a workflow comment"
+keeps repeating instead of being captured once, in one place.
 
 ## What this branch changes
 
-**`app/repository/habits.py`** — fixed `get_all()` to use
-`select(Habit).order_by(Habit.id.asc())` via `self._session` (not the
-undefined `session`), matching this repo's async 2.0-style SQLAlchemy
-usage.
+**`docs/adr/template.md`** — standard ADR shape: Title, Status, Context,
+Decision, Consequences. New ADRs are copies of this file.
 
-**`app/services/habits.py`** — added `HabitService.list_habits()`,
-delegating to `repository.get_all()`.
+**`docs/adr/README.md`** — short index explaining what an ADR is, when to
+write one, the naming convention (`NNNN-kebab-title.md`, zero-padded,
+monotonically increasing), and a table listing the ADRs that exist so far.
 
-**`app/routes/habits.py`** — added `GET /habits` (`list_habits`),
-`response_model=list[HabitRead]`, calling `service.list_habits()`. No
-auth/pagination/filtering, per the issue's stated scope.
+**`docs/adr/0001-two-agent-provider-variables.md`** — backfills the
+`AGENT_PROVIDER` vs `AGENT_PROVIDER_AUTOMERGE` split, citing
+`docs/architecture/agent-providers.md` and `AGENTS.md`'s CI/CD section as
+prior art for the decision.
 
-**`tests/test_habits.py`** — two new unit tests: empty list when no habits
-exist, and habits returned in `id` order after creating two.
+**`docs/adr/0002-plan-md-precommit-gate.md`** — backfills the
+`Plan.md`-before-implementation mechanical pre-commit gate
+(`.githooks/pre-commit`, `require_plan_staged` in `scripts/review_common.sh`).
 
-**`tests/integration/test_habits_flow.py`** — one new integration test:
-empty list, then a created habit appears in the list response.
+**`docs/adr/0003-client-side-hooks-branch-protection-stopgap.md`** —
+backfills the client-side-hooks stopgap adopted because this repo is
+private/Free-tier and GitHub's server-side branch protection 403s
+(issue #7).
+
+**`AGENTS.md`** — add a short pointer under "Where things live" (or a new
+small section) noting that new architecture decisions get recorded as an
+ADR in `docs/adr/` going forward, referencing the template.
 
 ## Out of scope
 
-- Pagination, filtering, or sorting query params (per issue #19).
-- Per-user scoping (no auth exists yet).
+- Converting every historical decision into an ADR retroactively — just
+  the three decisions above, enough to establish the pattern.
+- Any change to `.github/workflows/*`, `.githooks/*`, or issues
+  #25/#27/#28/#29 (owned by other in-flight sessions).
 
 ## Verification
 
-- `make lint` — passes (the `F821` from the automated attempt is fixed).
-- `make test` — all unit tests pass, including the two new ones.
-- `make test-integration` — to be run before push.
+- `make lint` — docs-only change plus an `AGENTS.md` edit; should pass
+  unchanged (no code touched).
+- `make test` — should pass unchanged (no runtime code touched).
+- `make agent-review-local` / `make agent-review-cloud` — run per the
+  standard loop before pushing/opening the PR.
+- No `make smoke` needed — nothing runtime-relevant is touched.
