@@ -40,8 +40,26 @@ Note: The `completions` domain is documented in `docs/domains/habits/README.md` 
   neither `make smoke` nor any other check here drives a real browser.
   Local-only, not wired into CI (issue #29). Needs
   `uv run playwright install chromium` once before first use.
+  `scripts/ui_smoke_common.py`'s `capture_screenshot()` is a reusable
+  helper any Playwright-driven check can call to save a timestamped PNG to
+  the git-ignored `.ui-smoke-artifacts/` directory -- `scripts/ui_smoke_check.py`
+  (the `/docs` check) already uses it; a future check (e.g. a dashboard
+  check) should too rather than reimplementing capture logic (#37).
+- **UI-touching PRs need visual proof.** Any PR whose diff touches
+  UI-facing code (`app/static/**`, any templates dir, or FastAPI
+  app-metadata changes affecting what `/docs` renders, e.g. `app/main.py`)
+  should run the relevant `ui-smoke` check locally and attach the resulting
+  screenshots from `.ui-smoke-artifacts/` (git-ignored, so they must be
+  attached by hand -- e.g. dragged into the PR description -- not linked)
+  as proof, instead of just asserting "tested manually." `make
+  agent-review-local` (below) softly flags a diff that touches UI paths
+  without Plan.md or the diff giving any indication this was done -- a
+  warning, not a hard block (#37).
 - `make lint`  — ruff + import-linter + file-size check; read the error, it tells you the fix
-- `make agent-review-local` — fast/cheap: lint + smoke + flags diff not covered by Plan.md
+- `make agent-review-local` — fast/cheap: lint + smoke + flags diff not
+  covered by Plan.md + warns (non-blocking) if the diff touches UI paths
+  without any sign of screenshot proof (see "UI-touching PRs need visual
+  proof" above)
 - `make agent-review-cloud` — deeper: an isolated read-only reviewer checks the diff
   against Plan.md and the linked GitHub issue's acceptance criteria
 
