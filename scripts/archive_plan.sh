@@ -28,7 +28,8 @@ slugify() {
     printf '%s' "$1" \
         | tr '[:upper:]' '[:lower:]' \
         | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' \
-        | cut -c1-50
+        | cut -c1-50 \
+        | sed -E 's/-+$//'
 }
 
 # Issue number: explicit ISSUE env var, else "issue-N" parsed out of the
@@ -64,6 +65,10 @@ prefix="${issue:-$(date +%Y-%m-%d)}"
 
 mkdir -p docs/plans
 out="docs/plans/${prefix}-${slug}.md"
+
+if [[ -f "$out" ]]; then
+    echo "archive_plan: warning: $out already exists, overwriting." >&2
+fi
 
 {
     echo "<!-- Archived from branch \`$branch\` on $(date -u +%Y-%m-%dT%H:%M:%SZ) by scripts/archive_plan.sh -->"

@@ -1,3 +1,5 @@
+import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -18,13 +20,33 @@ def _checkout(tmp_path: Path, branch: str) -> None:
     subprocess.run(["git", "checkout", "-q", "-b", branch, "main"], cwd=tmp_path, check=True)
 
 
-def _run(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run(tmp_path: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        env=env,
     )
+
+
+def _env_with_stubbed_gh(tmp_path: Path) -> dict[str, str]:
+    """PATH with a fake `gh` that always fails, ahead of the real one (if any).
+
+    current_issue_number() (scripts/review_common.sh) shells out to a real
+    `gh pr view` when no issue number is otherwise resolved. Against this
+    tmp repo (no remote, no PR) that already fails fast and harmlessly, but
+    stubbing it keeps the "no issue number" test hermetic regardless of
+    whether `gh` happens to be installed on the machine running the tests.
+    """
+    fake_bin = tmp_path.parent / f"{tmp_path.name}-fakebin"
+    fake_bin.mkdir(exist_ok=True)
+    gh_stub = fake_bin / "gh"
+    gh_stub.write_text("#!/usr/bin/env bash\nexit 1\n")
+    gh_stub.chmod(gh_stub.stat().st_mode | stat.S_IEXEC)
+    env = dict(os.environ)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    return env
 
 
 def test_issue_and_slug_from_branch_name(tmp_path: Path) -> None:
@@ -43,7 +65,7 @@ def test_falls_back_to_date_and_branch_name_when_no_issue_number(tmp_path: Path)
     _init_repo(tmp_path)
     _checkout(tmp_path, "some-descriptive-branch")
 
-    result = _run(tmp_path)
+    result = _run(tmp_path, env=_env_with_stubbed_gh(tmp_path))
 
     assert result.returncode == 0, result.stderr
     plans = list((tmp_path / "docs" / "plans").glob("*.md"))
