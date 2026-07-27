@@ -80,6 +80,28 @@ protection gap above):
 
 Always work on a branch and open a PR instead of pushing to `main` directly.
 
+## Archiving plans
+
+`Plan.md` (and often `Implement.md`) is mechanically required per-branch
+(see `require_plan_staged` above), but every new branch/worktree just
+overwrites them, so nothing keeps a running record across branches --
+`git log --oneline -- Plan.md` shows it's been rewritten on essentially
+every feature branch. `docs/plans/` is that record.
+
+This is a **manual convention**, not automated: right before merging a PR
+(after the last `Plan.md`/`Implement.md` update, before `gh pr merge`), run
+`make archive-plan` (or `bash scripts/archive_plan.sh [slug]` directly). It
+copies the branch's `Plan.md` (and `Implement.md`, if present) into
+`docs/plans/<issue-or-date>-<slug>.md` -- see `docs/plans/README.md` for
+the exact naming rules. Commit the resulting file as part of that same PR.
+
+This was deliberately not wired into `ci.yml`'s merge path or a new git
+hook: "this branch is about to merge" is a human/agent judgment call made
+once, not something reliably inferable from inside a single commit/push
+hook without either false-triggering early or missing the final update. A
+skipped archive doesn't break anything -- it just means that branch's plan
+is lost the same way it always has been before this existed.
+
 ## Observability (local)
 - `/metrics` — Prometheus text-format metrics on the running app, wired
   directly on `app` like `/health`. `http_requests_total` and
