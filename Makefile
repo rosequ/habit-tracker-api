@@ -1,4 +1,4 @@
-.PHONY: dev smoke lint lint-docs test test-integration metrics-query agent-review-local agent-review-cloud
+.PHONY: dev smoke ui-smoke lint lint-docs test test-integration metrics-query agent-review-local agent-review-cloud
 
 dev:
 	docker-compose up -d
@@ -9,6 +9,14 @@ dev:
 # use, docker-compose not up) that a text-only diff review can't see.
 smoke:
 	@bash scripts/smoke_test.sh
+
+# Boots the app the same way `make smoke` does, then drives a real headless
+# Playwright browser against the Swagger UI (/docs) instead of curl-ing
+# /health directly -- catches a broken UI render or a route that 500s via
+# "Try it out" that no other check exercises. Local-only (not wired into
+# CI); requires `uv run playwright install chromium` once beforehand.
+ui-smoke:
+	@bash scripts/ui_smoke.sh
 
 lint:
 	uv run ruff check .
