@@ -12,6 +12,8 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 - app/repository/ — the ONLY layer allowed to touch app/db/
 - app/db/ — engine, session, SQLModel table definitions
 
+Note: The `completions` domain is documented in `docs/domains/habits/README.md` but the API endpoints live in `app/routes/habits.py`
+
 ## Non-negotiable rules (enforced by lint, not memory)
 - Dependency direction: routes -> schemas -> services -> repository -> db
 - No raw SQL or DB session objects outside app/repository/
