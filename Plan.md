@@ -1,43 +1,49 @@
-# Plan: Implement GET /habits (issue #19), fixing an incomplete automated attempt
+# Plan: Issue #28 — Extend doc-gardener.yml to reconcile against accepted ADRs
 
-## Context
+## What
+`doc-gardener.yml`'s prompt currently tells the agent to compare
+`AGENTS.md` + `docs/` against one source of truth: the actual code. Once
+`docs/adr/` (issue #26) and `docs/architecture/ARCHITECTURE.md` (issue #25)
+exist, an **Accepted** ADR is a second source of truth that should also
+propagate into `ARCHITECTURE.md`/`AGENTS.md`, the same way a code change
+does today.
 
-Issue #19 ("Add GET /habits to list all habits") was labeled `agent-ready`
-and picked up by `agent-ticket.yml`. The automated run committed only a
-`HabitRepository.get_all()` method — buggy (`F821 Undefined name 'session'`,
-plus use of the legacy sync SQLAlchemy 1.x `Query` API instead of the async
-`select()` style used elsewhere in this repo) and, more significantly,
-never wired to a route or service, so `GET /habits` didn't actually exist.
-`fast-gates` caught the lint error; manual inspection caught the missing
-route/service/tests once lint was fixed and the PR was reviewed.
+## Why the mechanics don't need to change
+- The `docs_tree` shell snippet already does
+  `find docs -type f -name '*.md' -not -path 'docs/quality.md' ...` — that
+  already recursively includes `docs/adr/*.md` and
+  `docs/architecture/ARCHITECTURE.md` once they exist. Nothing to change
+  there.
+- `scripts/gate_and_merge.sh` is invoked with
+  `--require-path-prefix docs/` and `--require-exact-path AGENTS.md` — any
+  path under `docs/adr/` or `docs/architecture/` already satisfies that
+  prefix. Nothing to change there either, and per the issue this
+  mechanical enforcement must not be weakened.
 
-## What this branch changes
+## What actually changes
+Only the prompt text embedded in `.github/workflows/doc-gardener.yml`
+(the `Ask the agent to garden the docs` step):
+- Add a new paragraph telling the agent to treat any `docs/adr/*.md` file
+  whose front matter says `Status: Accepted` as an additional
+  authoritative source (alongside the actual code) when checking
+  `ARCHITECTURE.md`/`AGENTS.md` for staleness or contradictions.
+- Explicitly instruct it to ignore ADRs that are `Proposed`/draft/anything
+  other than `Accepted` — not yet decided, not to be reconciled against.
+- Explicitly instruct it to never author a new ADR and never edit anything
+  under `docs/adr/` itself — that directory is a historical record it
+  reads *from*, not a target it writes *to*. (The existing hard scope
+  limit paragraph — only `docs/`/`AGENTS.md`, never `docs/quality.md`,
+  never code, mechanically enforced by `gate_and_merge.sh` — is left
+  otherwise unchanged.)
 
-**`app/repository/habits.py`** — fixed `get_all()` to use
-`select(Habit).order_by(Habit.id.asc())` via `self._session` (not the
-undefined `session`), matching this repo's async 2.0-style SQLAlchemy
-usage.
-
-**`app/services/habits.py`** — added `HabitService.list_habits()`,
-delegating to `repository.get_all()`.
-
-**`app/routes/habits.py`** — added `GET /habits` (`list_habits`),
-`response_model=list[HabitRead]`, calling `service.list_habits()`. No
-auth/pagination/filtering, per the issue's stated scope.
-
-**`tests/test_habits.py`** — two new unit tests: empty list when no habits
-exist, and habits returned in `id` order after creating two.
-
-**`tests/integration/test_habits_flow.py`** — one new integration test:
-empty list, then a created habit appears in the list response.
-
-## Out of scope
-
-- Pagination, filtering, or sorting query params (per issue #19).
-- Per-user scoping (no auth exists yet).
+## Out of scope (explicitly not doing)
+- Not creating `docs/adr/` or `ARCHITECTURE.md` — those land from #26/#25
+  in parallel worktrees.
+- Not touching any other workflow file, `.githooks/pre-commit`,
+  `.githooks/pre-push`, or `scripts/gate_and_merge.sh`.
+- Not implementing #25/#26/#27/#29.
 
 ## Verification
-
-- `make lint` — passes (the `F821` from the automated attempt is fixed).
-- `make test` — all unit tests pass, including the two new ones.
-- `make test-integration` — to be run before push.
+Since this is a workflow-prompt-only change with no runtime code touched,
+`make smoke` isn't relevant. Run `make lint`, `make test`,
+`make agent-review-local`, then `make agent-review-cloud`.
