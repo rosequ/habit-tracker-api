@@ -4,9 +4,9 @@
 Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 
 ## Where things live
-- docs/architecture/ARCHITECTURE.md — birds-eye system overview (domains,
-  request flow, deployment, observability, automation pipeline)
-- docs/architecture/ — layering rules, conventions
+- docs/architecture/ — layering rules, conventions; see
+  docs/architecture/ARCHITECTURE.md for a birds-eye system overview
+  (domains, request flow, deployment, observability, automation pipeline)
 - docs/domains/<name>/ — one README per business domain (e.g. habits)
 - app/routes/ — HTTP layer only
 - app/schemas/ — request/response shapes
