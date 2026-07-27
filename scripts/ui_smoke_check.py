@@ -11,7 +11,10 @@ import sys
 
 from playwright.sync_api import sync_playwright
 
+from ui_smoke_common import capture_screenshot
+
 EXPECTED_ROUTES = ["/health", "/habits"]
+CHECK_NAME = "docs"
 
 
 def main() -> int:
@@ -40,6 +43,9 @@ def main() -> int:
                 print(f"ui_smoke: FAIL -- expected route '{route}' not found on /docs", file=sys.stderr)
                 browser.close()
                 return 1
+
+        loaded_screenshot = capture_screenshot(page, CHECK_NAME, "loaded")
+        print(f"ui_smoke: screenshot saved to {loaded_screenshot}")
 
         # Swagger UI's DOM id for an untagged operation is
         # "operations-default-<operationId>" -- FastAPI's operationId for
@@ -78,6 +84,9 @@ def main() -> int:
             print(f"ui_smoke: FAIL -- browser console errors after Try it out: {console_errors}", file=sys.stderr)
             browser.close()
             return 1
+
+        try_it_out_screenshot = capture_screenshot(page, CHECK_NAME, "try-it-out")
+        print(f"ui_smoke: screenshot saved to {try_it_out_screenshot}")
 
         browser.close()
 

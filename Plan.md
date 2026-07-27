@@ -1,74 +1,91 @@
-# Plan: Add `make ui-smoke` — Playwright check against the Swagger UI (#29)
+# Plan: Require agent-browser screenshot proof for UI-touching PRs (#37)
 
 ## Context
 
-`make smoke` boots the real app and hits `/health` with curl, but nothing
-exercises the app the way a human actually browses it: FastAPI's
-auto-generated Swagger UI at `/docs` (built from `/openapi.json`). A broken
-schema, a JS console error, or a route that renders in the UI but 500s when
-"Try it out" is used wouldn't be caught by `make lint`, `make test`, or
-`make smoke` — all non-browser.
+`make ui-smoke` (#29/PR #34) already proves `/docs` renders and "Try it out"
+works, but it's pass/fail only -- no artifact is left behind. As UI surface
+grows (#36 adds a real dashboard; more will likely follow), there's no
+reusable way to capture visual proof from a Playwright run, no
+repo-documented expectation that UI-touching PRs include it, and no
+automated nudge when a diff changes UI-facing code without any.
 
-Issue #29 raised three open questions and left them for the repo owner to
-resolve rather than guessing. They've since been confirmed; recording the
-decisions and the "why" here per this repo's convention for ADR-worthy calls:
-
-1. **Tooling: Playwright, driven directly (Python).** Added as a dev
-   dependency rather than reaching for an MCP-based browser tool. No new
-   external service or config to run/maintain, and it stays fully
-   deterministic and local — same shape as the rest of this repo's
-   verification tooling (pytest, ruff, etc. are all plain Python deps too).
-2. **Scope: local-only `make` target, not wired into CI.** Adds
-   `make ui-smoke`, analogous to `make smoke`, but does NOT touch
-   `.github/workflows/*` — headless-browser binaries are a heavier CI
-   dependency than this issue is scoped to justify, and the issue explicitly
-   called CI wiring a separate decision.
-3. **Blocking: N/A.** Since it's local-only for now, there's nothing in CI
-   for it to block; it's an opt-in check a developer runs like `make smoke`.
+This branch implements the three-part proposal from #37 exactly, and
+nothing beyond it: no new backend endpoints, no hard CI gate, no changes to
+`.github/workflows/*` (stays local-only, matching #29's resolved scope).
+The actual habits dashboard (#36) is out of scope here and is being built
+concurrently in a separate worktree -- this branch does not depend on it and
+does not touch `app/static/` itself; it only teaches the *existing* `/docs`
+check to use the new helper, and documents/soft-flags the convention for
+whichever PR (almost certainly #36) is the first to add real UI-facing
+files.
 
 ## What this branch changes
 
-- **`pyproject.toml`** — adds `playwright` to `[dependency-groups].dev`.
-- **`scripts/ui_smoke.sh`** — new script, modeled directly on
-  `scripts/smoke_test.sh`: boots docker-compose + a real uvicorn on its own
-  port (`UI_SMOKE_PORT`, default `8099` — distinct from both `APP_PORT` and
-  `SMOKE_PORT` so none of the three collide if run together), waits for
-  `/health`, then runs a Playwright script that:
-  1. Loads `/docs` headless and asserts it doesn't throw a browser console
-     error.
-  2. Asserts the rendered page lists the routes we expect (`/health`,
-     `/habits`).
-  3. Drives Swagger UI's "Try it out" on `GET /health` and asserts a real
-     `200` with `"status":"ok"` comes back through the browser, not just
-     from a direct HTTP call — this is the part `make smoke` structurally
-     can't check, since it only ever calls the API directly.
-  4. Tears down the uvicorn process on exit (`trap ... EXIT`), same pattern
-     as `smoke_test.sh`.
-- **`scripts/ui_smoke_check.py`** — the actual Playwright driver script
-  invoked by `ui_smoke.sh` (kept separate from the bash wrapper since the
-  browser automation itself is Python, matching how the rest of this repo's
-  scripts split shell orchestration from Python logic where relevant).
-- **`Makefile`** — new `ui-smoke` target calling `scripts/ui_smoke.sh`, plus
-  a comment matching the style of the existing `smoke` target.
-- **`AGENTS.md`** — documents `make ui-smoke` next to `make smoke` in "How to
-  verify your work", including that it needs
-  `uv run playwright install chromium` once (browser binaries aren't a
-  Python dependency `uv sync` can fetch on its own).
+- **`scripts/ui_smoke_common.py`** (new) -- a small, generic
+  `capture_screenshot(page, check_name, step)` helper any Playwright-driven
+  check can call. Saves a timestamped full-page PNG to the git-ignored
+  `.ui-smoke-artifacts/` directory at the repo root
+  (`<check_name>-<step>-<UTC timestamp>.png`) and returns the path written.
+  No check-specific logic lives here -- it only knows how to name and save a
+  file, so #36's future dashboard check (or anything else added later) can
+  reuse it as-is instead of reimplementing capture logic.
+- **`scripts/ui_smoke_check.py`** -- now imports and calls
+  `capture_screenshot` at two points in the existing `/docs` flow: right
+  after the page is confirmed rendered (step `"loaded"`) and right after
+  "Try it out" returns a real response (step `"try-it-out"`). Assertions,
+  control flow, and exit codes are unchanged -- the check still passes or
+  fails exactly as before; it just also leaves two screenshots behind on a
+  passing run.
+- **`.gitignore`** -- adds `.ui-smoke-artifacts/` so these screenshots are
+  never accidentally committed.
+- **`AGENTS.md`** -- documents the "UI-touching PRs need visual proof"
+  convention right next to the existing `make ui-smoke` docs: any PR
+  touching UI-facing code (`app/static/**`, any templates dir, or FastAPI
+  app-metadata affecting what `/docs` renders) should run the relevant
+  `ui-smoke` check and attach the resulting `.ui-smoke-artifacts/`
+  screenshots to the PR description as proof. Also updates the one-line
+  `make agent-review-local` description to mention the new warning.
+- **`scripts/review_common.sh`** -- adds `UI_PATH_PATTERN` (matches
+  `app/static/**`, any `templates/` dir, `app/main.py`) and a new
+  `warn_ui_screenshot_proof()` function: if the branch diff touches a
+  UI-facing path but neither `Plan.md` nor the open PR body mentions
+  "screenshot"/"ui-smoke"/"ui_smoke", it prints a warning to stderr. Never
+  exits non-zero -- purely a nudge, matching the issue's explicit "warning,
+  not a hard block" requirement. Can't check that a screenshot *file*
+  actually exists, since `.ui-smoke-artifacts/` is git-ignored by design and
+  so never appears in any diff this function inspects either way -- this is
+  a prose-mention nudge, not proof-of-work verification.
+- **`scripts/agent_review_local.sh`** -- calls `warn_ui_screenshot_proof`
+  once, right after the existing `require_plan` call, before the
+  Plan.md-coverage LLM check. Purely additive -- doesn't change the script's
+  exit code or existing pass/fail behavior.
 
 ## Out of scope
 
-- Wiring this into `.github/workflows/*` or `ci.yml` (resolved above — a
-  deliberate non-goal of this issue).
-- Evaluating MCP-based browser tooling (resolved above).
-- Exercising any endpoint beyond one read-only GET through "Try it out" —
-  issue #29 only asked for "at least one."
-- Issues #25/#26/#27/#28, worked in sibling worktrees.
+- The actual habits dashboard UI (#36) -- separate worktree, separate PR.
+- Any hard CI gate or `.github/workflows/*` change (issue is explicit: stays
+  local-only, matching #29's resolved scope).
+- Verifying a screenshot file actually exists on disk from
+  `agent-review-local` -- structurally can't, since the artifacts directory
+  is git-ignored; the warning is a prose-mention nudge only, as scoped by
+  the issue ("Plan.md / the diff gives no indication screenshot proof
+  exists").
+- Wiring #36's future dashboard check to this helper -- #37 explicitly
+  leaves that reconciliation to a human at merge time, since #36 is being
+  built concurrently in a different worktree.
 
 ## Verification
 
-- `make lint` — passes.
-- `make test` — unaffected, still passes.
-- `make ui-smoke` — new target, run directly to confirm it passes against a
-  real local boot (requires `uv run playwright install chromium` once,
-  first time).
-- `make agent-review-local` / `make agent-review-cloud` before push/PR.
+- `make lint` -- passes.
+- `make test` -- unaffected, still passes.
+- `make ui-smoke` -- still passes with the same assertions; now also leaves
+  `.ui-smoke-artifacts/docs-loaded-*.png` and
+  `.ui-smoke-artifacts/docs-try-it-out-*.png` behind. Confirmed the files
+  are actually created after a real run.
+- `make agent-review-local` -- confirmed the new `warn_ui_screenshot_proof`
+  warning actually fires by temporarily creating a dummy
+  `app/static/x.txt` on top of this branch's real diff (no `Plan.md`/PR-body
+  mention of "screenshot") and observing the warning print, then removing
+  it again before committing -- #37 itself doesn't add any real
+  `app/static/` files, so nothing under that path should exist in the
+  actual diff this branch commits.

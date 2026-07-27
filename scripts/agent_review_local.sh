@@ -24,6 +24,10 @@ fi
 
 require_plan
 
+# Warning-only nudge, never fails this check -- see AGENTS.md's
+# "UI-touching PRs need visual proof" convention (#37).
+warn_ui_screenshot_proof
+
 diff_content="$(review_full_diff)"
 if [[ -z "$diff_content" ]]; then
     echo "==> No changes vs $BASE_REF; nothing to review."
