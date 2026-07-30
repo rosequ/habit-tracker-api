@@ -50,6 +50,9 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
+    # See agent-ticket.yml for why: a stuck agent call has no internal
+    # timeout and otherwise runs until GitHub's 6-hour job ceiling.
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine
