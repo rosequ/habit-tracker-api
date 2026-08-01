@@ -1,171 +1,119 @@
-# Plan: Add a minimal habits dashboard for agent-browser QA (#36), reconciled with #37's screenshot helper
+# Plan: Redesign the habits dashboard's visual layer (#41)
 
 ## Context
 
-The only "UI" this API had before this branch was FastAPI's auto-generated
-Swagger page at `/docs` (see #35/#29). That's fine for exercising individual
-endpoints in isolation, but there was nothing a browser-automation agent
-could click through the way an actual user would: fill a form, submit,
-watch a list update, mark something done. All the backend pieces this issue
-needed already existed and were merged to `main` (`POST /habits`,
-`GET /habits`, `GET /habits/{id}`, `POST /habits/{id}/completions`).
+#36 (PR #39, not yet merged) added a functional but visually bare-bones
+habits dashboard at `app/static/index.html`: default system font, a fixed
+`640px` centered column, plain bordered `<li>` boxes for habit cards, no
+color palette beyond a couple of inline status colors, no elevation, no
+responsive behavior below the fixed column, no loading/transition states,
+no dark mode. #41 redesigns the visual layer only, on top of #36 -- no new
+backend data, no new endpoints, no framework/build step. Because `main`
+doesn't have `app/static/index.html` yet, this branch (`agent/issue-41`)
+is stacked on `agent/issue-36`, not `main`, and its PR targets
+`agent/issue-36` (PR #39) rather than `main`.
 
-A sibling issue, #37 ("require agent-browser screenshot proof for any PR
-that touches UI"), was implemented concurrently in a separate worktree, by
-design -- neither branch blocked on the other. #37 built a generic, reusable
-Playwright screenshot-capture helper (`scripts/ui_smoke_common.py`) and
-wired it into the `/docs` check. This branch originally shipped its own
-self-contained screenshot logic in `check_dashboard()` instead of waiting
-for that helper, writing PNGs straight to a local `artifacts/ui-smoke/`
-directory.
+## What this branch changes
 
-Both PRs are now implemented: #37 landed the shared helper (PR #38), and
-this branch (PR #39) has merged that work in and reconciled the overlap --
-see "Reconciliation with #37" below. `scripts/ui_smoke_check.py` no longer
-has two separate, divergent screenshot implementations; there is one.
+Everything is in **`app/static/index.html`** only (markup/CSS/JS) -- no
+touches to `app/routes/`, `app/services/`, `app/repository/`, or
+`app/db/`, matching the issue's explicit scope boundary.
 
-## What this branch changes (issue #36's dashboard)
+1. **Design tokens** -- a `:root` block of CSS custom properties for
+   color, an 8-step spacing scale, a small type scale, radius steps, and
+   three shadow/elevation levels. Every rule in the file references a
+   token instead of a one-off value.
+2. **Habit cards** -- `.habit-item` is now an elevated card
+   (`box-shadow`, hover lift) inside a responsive CSS grid
+   (`repeat(auto-fill, minmax(min(100%, 260px), 1fr))`), not a bordered
+   `<li>`. Category is rendered as a `.category-chip` pill whose color is
+   derived from the category string via a small `hashHue()` function
+   (character-code hash -> `hue % 360`, applied as an inline
+   `--chip-h` custom property) -- no new data, same category always maps
+   to the same hue. Background/text lightness gap is fixed regardless of
+   hue, which keeps contrast well within WCAG AA for any category.
+3. **Interaction states** -- `setButtonLoading()` disables the button,
+   toggles an `.is-loading` class (hides the label, shows a CSS spinner
+   via `::after`), and sets `aria-busy` for the duration of the
+   add-habit and mark-done fetches, restoring it in a `finally` block so
+   it resets even on error. A newly-added habit card gets a
+   `habit-item--enter` class driving a `card-in` keyframe
+   (fade + slight rise), removed after `animationend`; respects
+   `prefers-reduced-motion`. `.completion-status` and the add-habit error
+   are restyled as pill/banner badges (`.completion-status.success` /
+   `.already-done` / `.error`, `.alert-danger`) instead of plain colored
+   text.
+4. **Empty state** -- `#habit-list-empty` (still the same id/hidden
+   toggle logic) is now a designed empty state: icon, heading, short
+   copy, and an "Add a habit" link that focuses the name input.
+5. **Responsive layout** -- `.page` uses a fluid `width: min(880px,
+   100%)` with `clamp()` padding instead of a fixed `640px` column; the
+   habit grid and add-habit form naturally collapse to a single column
+   on narrow viewports. Verified down to a 375px-wide viewport (see
+   Verification below).
+6. **Accessibility** -- a global `:focus-visible` rule gives every
+   interactive element (inputs, buttons, the empty-state link) a visible
+   focus ring; palette pairs (text/background, chip text/background,
+   badge text/background) were chosen for WCAG AA contrast; the existing
+   `role="alert"` on `#add-habit-error` and `aria-live="polite"` on
+   `.completion-status` are unchanged and still correct after the
+   restyle, plus `aria-busy` is now set on buttons during in-flight
+   requests.
+7. **Dark mode** -- a `prefers-color-scheme: dark` block overrides the
+   color tokens (surface, text, status, chip lightness values) with a
+   dark palette; spacing/type/radius tokens are unchanged since they're
+   not color-dependent.
 
-- **`app/static/index.html`** -- new, vanilla HTML/JS dashboard, no build
-  step, no framework, no external dependencies (per the issue's explicit
-  scope). On load, fetches `GET /habits` and renders each as a card (name,
-  category, daily target). A form posts to `POST /habits` and appends the
-  new habit to the DOM directly from the response -- no page reload, no
-  re-fetch of the whole list. Each habit card has a "Mark done today"
-  button that posts to `POST /habits/{id}/completions` with an empty body
-  (the API defaults `completion_date` to today server-side) and reflects
-  the result inline: green "Done today ✓" on 201, amber "Already done
-  today" on the existing 409, or a red error message otherwise (also used
-  for 422s from the add-habit form, using the same field-level `detail`
-  shape `app/schemas/` already returns).
-- **`app/main.py`** -- mounts `app/static/` at `/dashboard` via
-  `fastapi.staticfiles.StaticFiles(..., html=True)`, so `GET /dashboard`
-  serves `index.html`. This is the only backend change: no new
-  `app/routes/`, `app/services/`, `app/repository/`, or `app/db/` code, no
-  new business logic -- purely an additive static mount, same
-  layering-neutral pattern `/health` already uses directly in `main.py`.
-- **`tests/test_dashboard.py`** -- two focused tests: the dashboard route
-  serves HTML containing the add-habit form and habit list (both with and
-  without the trailing slash StaticFiles redirects to). Deliberately not
-  testing markup/styling beyond "the hooks the JS and Playwright rely on
-  exist" -- the interactive behavior itself is exercised by `make
-  ui-smoke`, not `make test`, since it needs a real browser.
-- **`scripts/ui_smoke_check.py`** -- refactored the existing `/docs` check
-  into `check_docs()` and added `check_dashboard()`: loads `/dashboard`,
-  screenshots the empty/loaded state, fills and submits the add-habit form,
-  waits for the new habit to appear in the DOM (asserts no reload occurred
-  and no error banner shown), screenshots that state, clicks "Mark done
-  today", waits for the green success text, and takes a third screenshot.
-  Each check uses its own `Page` (and its own console-error listener) so a
-  JS error on one page can't be misattributed to the other.
-- **`scripts/ui_smoke.sh`** -- added `alembic upgrade head` right after
-  `docker-compose up -d`. `make smoke`/the old `/docs`-only check never
-  needed this since `/health` only runs `SELECT 1`, but the dashboard check
-  does real `POST /habits`/`POST .../completions` calls that need the
-  actual tables to exist.
-- **`Makefile`** / **`AGENTS.md`** -- updated the `ui-smoke` descriptions to
-  mention the dashboard check.
-- **`.envrc`** (gitignored, per-worktree, not part of this diff) -- set
-  `DB_PORT=5536` / `APP_PORT=8136` / `PROMETHEUS_PORT=9136` for this
-  worktree, since every port in the low 5430s/9090s/8000s range was already
-  claimed by other concurrently-running worktrees on this machine.
-- **`docs/screenshots/issue-36/`** -- three PNGs (before-add / after-add /
-  marked-done) copied here and committed once, specifically so the PR
-  description for #36 can embed them via a `raw.githubusercontent.com` URL
-  pinned to a commit SHA -- GitHub PR bodies can't inline a local,
-  gitignored file. This is a one-time proof-of-work snapshot for the PR
-  body, unrelated to and untouched by the reconciliation below; it stays
-  where it is.
+All DOM hooks `scripts/ui_smoke_check.py`'s `check_dashboard()` and
+`tests/test_dashboard.py` depend on are unchanged: `#add-habit-form`,
+`#habit-name-input`, `#habit-daily-target-input`, `#habit-category-input`,
+`#add-habit-submit`, `#add-habit-error`, `.habit-item`, `.mark-done-btn`,
+`.completion-status`, `#habit-list`/`#habit-list-empty`. Only their
+styling and, where noted, their internal wrapper markup (e.g. a
+`<div class="field">` around each label/input instead of a nested
+`<label>`) changed -- ids, classes, and `data-habit-id` attributes did
+not.
 
-## What merged in from #37 (shared screenshot helper + policy)
+## Explicitly out of scope (per the issue)
 
-- **`scripts/ui_smoke_common.py`** (new) -- `capture_screenshot(page,
-  check_name, step)`: saves a timestamped full-page PNG to the git-ignored
-  `.ui-smoke-artifacts/` directory at the repo root
-  (`<check_name>-<step>-<UTC timestamp>.png`) and returns the path written.
-  No check-specific logic lives here.
-- **`scripts/ui_smoke_check.py`**'s `/docs` check -- calls
-  `capture_screenshot` at two points: right after the page is confirmed
-  rendered (step `"loaded"`) and right after "Try it out" returns a real
-  response (step `"try-it-out"`). Assertions, control flow, and exit codes
-  are unchanged from the pre-#37 `/docs` check.
-- **`.gitignore`** -- `.ui-smoke-artifacts/` so these screenshots are never
-  accidentally committed.
-- **`AGENTS.md`** -- the "UI-touching PRs need visual proof" convention:
-  any PR touching UI-facing code (`app/static/**`, any templates dir, or
-  FastAPI app-metadata affecting what `/docs` renders) should run the
-  relevant `ui-smoke` check and attach the resulting `.ui-smoke-artifacts/`
-  screenshots to the PR description as proof. Also updates the one-line
-  `make agent-review-local` description to mention the new warning.
-- **`scripts/review_common.sh`** -- `UI_PATH_PATTERN` (matches
-  `app/static/**`, any `templates/` dir, `app/main.py`) and
-  `warn_ui_screenshot_proof()`: if the branch diff touches a UI-facing path
-  but neither `Plan.md` nor the open PR body mentions
-  "screenshot"/"ui-smoke"/"ui_smoke", it prints a warning to stderr. Never
-  exits non-zero -- a nudge, not a hard block. Can't check that a
-  screenshot *file* actually exists, since `.ui-smoke-artifacts/` is
-  git-ignored and so never appears in any diff this function inspects.
-- **`scripts/agent_review_local.sh`** -- calls `warn_ui_screenshot_proof`
-  once, right after `require_plan`, before the Plan.md-coverage LLM check.
-
-## Reconciliation with #37
-
-Both branches independently modified `scripts/ui_smoke_check.py`; #36's
-`check_dashboard()` had its own ad hoc `page.screenshot(...)` calls into a
-separate `artifacts/ui-smoke/` directory, while #37 added
-`ui_smoke_common.capture_screenshot()` writing to `.ui-smoke-artifacts/`.
-Merging #37 into this branch and reconciling the overlap did:
-
-- `check_docs()` now matches #37's version exactly: imports and calls
-  `capture_screenshot(page, "docs", "loaded")` and
-  `capture_screenshot(page, "docs", "try-it-out")` at the same two points
-  #37 placed them.
-- `check_dashboard()` keeps its own dashboard-specific logic (form fill,
-  submit, mark-done) but its three screenshot calls now go through
-  `capture_screenshot(page, "dashboard", "before-add")` /
-  `"after-add"` / `"marked-done"` instead of raw `page.screenshot(...)`
-  calls. The local `ARTIFACTS_DIR = .../"artifacts"/"ui-smoke"` constant
-  and its manual `.mkdir()` call are gone -- the helper creates the
-  directory itself. The final "PASS" print now references
-  `ui_smoke_common.ARTIFACTS_DIR`.
-- There is exactly one gitignored screenshot-artifacts directory now:
-  `.ui-smoke-artifacts/`. The `artifacts/` entry from #36's `.gitignore`
-  diff is gone; `artifacts/` is never created by anything in this repo
-  anymore.
-- `Makefile`'s `ui-smoke` target comment now says `.ui-smoke-artifacts/`
-  instead of `artifacts/ui-smoke/`, and notes screenshots come from both
-  flows via `capture_screenshot()`.
-- `AGENTS.md`'s `make ui-smoke` bullet was rewritten as one description
-  (not a concatenation of both branches' edits): boots the app +
-  `alembic upgrade head`, drives a headless browser against `/docs` and
-  `/dashboard`, what each check verifies, and that every screenshot (five
-  per run: two from `/docs`, three from `/dashboard`) goes through
-  `capture_screenshot()` into `.ui-smoke-artifacts/`. #37's separate
-  "UI-touching PRs need visual proof" bullet and its `make
-  agent-review-local` one-liner update are unchanged.
-
-## Out of scope (per the issue)
-
-- Editing/deleting habits, filtering, streaks/charts, auth, styling
-  polish.
-- Wiring `ui-smoke` into CI (stays local-only, same as #29's resolved
-  scope).
-- Any hard CI gate or `.github/workflows/*` change for the screenshot-proof
-  convention (#37 is explicit: stays local-only, matching #29's resolved
-  scope).
-- Verifying a screenshot file actually exists on disk from
-  `agent-review-local` -- structurally can't, since the artifacts directory
-  is git-ignored; the warning is a prose-mention nudge only.
+- No progress ring/indicator implying same-day multi-completions --
+  `daily_target` is not a same-day completion count (`DuplicateCompletionError`
+  caps a habit at one completion per day).
+- No streaks or completion history (`GET /habits` returns no completion
+  data; see #23, still open).
+- No editing/deleting habits, auth, or multi-page routing.
+- No backend changes of any kind.
 
 ## Verification
 
-- `make lint` -- passes (ruff, import-linter layering contract, file-size
-  check).
-- `make test` -- passes, including the two `tests/test_dashboard.py` tests.
-- `make ui-smoke` -- passes: both the `/docs` check and the `/dashboard`
-  check (form fill/submit, list update without reload, "Mark done today"
-  success state). Confirmed `.ui-smoke-artifacts/` contains five PNGs after
-  a run (`docs-loaded-*`, `docs-try-it-out-*`, `dashboard-before-add-*`,
-  `dashboard-after-add-*`, `dashboard-marked-done-*`), and that `artifacts/`
-  is not recreated.
-- `make agent-review-local` / `make agent-review-cloud` before push/PR.
+- `make lint`
+- `make test` (including the existing `tests/test_dashboard.py`, unmodified
+  in what it asserts)
+- `make ui-smoke` -- `check_dashboard()` passes unmodified in what it
+  asserts; screenshots land in `.ui-smoke-artifacts/` per the shared
+  `capture_screenshot()` helper (#37).
+- A standalone, uncommitted Playwright script captured an additional
+  screenshot at a 375px-wide mobile viewport (the `ui-smoke` check only
+  screenshots at its default desktop viewport) -- copied into
+  `docs/screenshots/issue-41/` for the PR body.
+- `make agent-review-local`
+
+## Screenshots
+
+`docs/screenshots/issue-41/` holds the before/after proof for the PR body:
+
+- `before-redesign-desktop.png` -- the old #36 dashboard, for comparison
+  (captured by temporarily serving #36's original `index.html` from disk,
+  not a code change).
+- `after-redesign-desktop-before-add.png` /
+  `after-redesign-desktop-after-add.png` /
+  `after-redesign-desktop-marked-done.png` -- the redesigned dashboard's
+  three states from a real `make ui-smoke` run.
+- `after-redesign-empty-state.png` -- the designed empty state (point 4),
+  captured from the standalone script below since `check_dashboard()`
+  never runs against a truly-empty list.
+- `after-redesign-mobile-375.png` -- a ~375px mobile viewport shot (point
+  5), from the standalone script noted in Verification since `ui-smoke`
+  only screenshots at its default desktop viewport.
+- `after-redesign-dark-mode.png` -- the `prefers-color-scheme: dark`
+  variant (point 7), also from the standalone script.
