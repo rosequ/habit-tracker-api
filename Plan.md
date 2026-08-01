@@ -38,6 +38,10 @@ already documents the rest of the job):
   never code, mechanically enforced by `gate_and_merge.sh` — is left
   otherwise unchanged.)
 
+(`Plan.md` itself is, as always, also updated to describe this branch's
+change — every branch in this repo overwrites its own root-level `Plan.md`;
+that's mechanical, not additional scope.)
+
 ## Out of scope (explicitly not doing)
 - Not creating `docs/adr/` or `ARCHITECTURE.md` — those land from #26/#25
   in parallel worktrees.

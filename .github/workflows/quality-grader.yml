@@ -34,6 +34,9 @@ concurrency:
 jobs:
   grade:
     runs-on: ubuntu-latest
+    # See agent-ticket.yml for why: a stuck agent call has no internal
+    # timeout and otherwise runs until GitHub's 6-hour job ceiling.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
