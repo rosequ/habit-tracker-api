@@ -49,6 +49,13 @@ class CompletionService:
         except RepositoryDuplicateCompletionError as exc:
             raise DuplicateCompletionError from exc
 
+    async def get_completions(self, habit_id: int) -> list[Completion]:
+        habit = await self._habit_repository.get_by_id(habit_id)
+        if habit is None:
+            raise HabitNotFoundError
+
+        return await self._completion_repository.get_completions_by_habit_id(habit_id)
+
 
 def get_completion_service(
     habit_repository: Annotated[HabitRepository, Depends(get_habit_repository)],
