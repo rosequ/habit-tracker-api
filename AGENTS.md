@@ -12,7 +12,7 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 - app/repository/ — the ONLY layer allowed to touch app/db/
 - app/db/ — engine, session, SQLModel table definitions
 
-Note: The `completions` domain is documented in `docs/domains/habits/README.md` but the API endpoints live in `app/routes/habits.py`
+Note: The `completions` domain is documented in `docs/domains/habits/README.md` (section "Habit completion (check-in)") but the API endpoints live in `app/routes/habits.py`
 
 ## Non-negotiable rules (enforced by lint, not memory)
 - Dependency direction: routes -> schemas -> services -> repository -> db
@@ -31,8 +31,35 @@ Note: The `completions` domain is documented in `docs/domains/habits/README.md` 
   not up, a stale process still bound to the port -- that a text-only diff
   review can never see, because they only manifest by actually running the
   command.
+- `make ui-smoke` — boots the app the same way `make smoke` does, then drives
+  a real headless Playwright browser against the Swagger UI (`/docs`)
+  instead of curl-ing `/health` directly: confirms the page renders with no
+  console errors, lists the expected routes, and that "Try it out" on
+  `GET /health` returns a real response through the browser. Catches a
+  broken UI render or a route that renders but 500s via "Try it out" --
+  neither `make smoke` nor any other check here drives a real browser.
+  Local-only, not wired into CI (issue #29). Needs
+  `uv run playwright install chromium` once before first use.
+  `scripts/ui_smoke_common.py`'s `capture_screenshot()` is a reusable
+  helper any Playwright-driven check can call to save a timestamped PNG to
+  the git-ignored `.ui-smoke-artifacts/` directory -- `scripts/ui_smoke_check.py`
+  (the `/docs` check) already uses it; a future check (e.g. a dashboard
+  check) should too rather than reimplementing capture logic (#37).
+- **UI-touching PRs need visual proof.** Any PR whose diff touches
+  UI-facing code (`app/static/**`, any templates dir, or FastAPI
+  app-metadata changes affecting what `/docs` renders, e.g. `app/main.py`)
+  should run the relevant `ui-smoke` check locally and attach the resulting
+  screenshots from `.ui-smoke-artifacts/` (git-ignored, so they must be
+  attached by hand -- e.g. dragged into the PR description -- not linked)
+  as proof, instead of just asserting "tested manually." `make
+  agent-review-local` (below) softly flags a diff that touches UI paths
+  without Plan.md or the diff giving any indication this was done -- a
+  warning, not a hard block (#37).
 - `make lint`  — ruff + import-linter + file-size check; read the error, it tells you the fix
-- `make agent-review-local` — fast/cheap: lint + smoke + flags diff not covered by Plan.md
+- `make agent-review-local` — fast/cheap: lint + smoke + flags diff not
+  covered by Plan.md + warns (non-blocking) if the diff touches UI paths
+  without any sign of screenshot proof (see "UI-touching PRs need visual
+  proof" above)
 - `make agent-review-cloud` — deeper: an isolated read-only reviewer checks the diff
   against Plan.md and the linked GitHub issue's acceptance criteria
 
@@ -42,10 +69,10 @@ if other files changed since `main` but `Plan.md` didn't, so a stale plan left
 over from a previous feature/worktree can't silently rubber-stamp unrelated
 work as "planned." Both also require the agent CLI for whichever
 `AGENT_PROVIDER` is active installed and authenticated separately (they
-shell out to it via `scripts/run_agent.sh` -- see
-`docs/architecture/agent-providers.md`). Loop: implement ->
-`agent-review-local` -> fix -> repeat until clean -> `agent-review-cloud` ->
-address comments -> repeat.
+ shell out to it via `scripts/run_agent.sh` -- see
+  `docs/architecture/agent-providers.md`). Loop: implement ->
+ `agent-review-local` -> fix -> repeat until clean -> `agent-review-cloud` ->
+ address comments -> repeat.
 
 ## Branching
 This is a private repo on GitHub's Free plan, which doesn't support server-side
@@ -70,7 +97,7 @@ protection gap above):
   lint` first) and `make test` both pass (a pure branch deletion is
   exempt -- nothing to check). This runs on every push, including small WIP
   ones -- it boots Postgres via docker-compose, a real `uvicorn` process,
-  and a `claude -p` call, so expect it to take a while and to need the
+  and a `claude -p` call so expect it to take a while and to need the
   `claude` CLI installed/authenticated. Override once with
   `SKIP_PUSH_VERIFICATION=1 git push ...`. Pushing a tag hits this same
   gate (anything with a non-zero local SHA does), not just branches.
@@ -200,7 +227,7 @@ Because a `GITHUB_TOKEN`-authored PR doesn't trigger `ci.yml`'s own
 `pull_request` event (GitHub's anti-recursion rule for the default token),
 `doc-gardener.yml`/`garbage-collector.yml`'s PRs won't show a `fast-gates`
 check-run on GitHub's Checks tab — that's expected, not a bug: the inline
-checks are what actually gates the merge, and the PR body says so. An
+checks are what actually gate the merge, and the PR body says so. An
 earlier design fired a `gh workflow run ci.yml --ref <branch>` fire-and-forget
 purely for a visible (non-gating) check-run, but that was cut: it has no
 effect on the actual gate, and it introduced two real bugs across review
@@ -208,7 +235,7 @@ effect on the actual gate, and it introduced two real bugs across review
 `github.event.pull_request.number` empty, which would have made
 `async-verification`'s failure-follow-up dispatch misfire; separately,
 `ci.yml`'s `gitleaks` step would inherit the same full-history-scan problem
-described below). Not worth the risk for a cosmetic nicety.
+ described below). Not worth the risk for a cosmetic nicety.
 
 `doc-gardener.yml`/`garbage-collector.yml`'s own inline gitleaks step does
 NOT use `gitleaks/gitleaks-action@v2` (unlike `ci.yml`'s `fast-gates`): that
@@ -222,8 +249,8 @@ top of `main`.
 
 `doc-gardener.yml`'s auto-merge gate is syntax/scope-only by design —
 `make lint-docs` only checks docs are non-empty, there's no semantic
-correctness check on doc content. Accepted: doc-only mistakes are low-stakes
-and self-correcting (next day's run, or a human revert).
+ correctness check on doc content. Accepted: doc-only mistakes are low-stakes
+ and self-correcting (next day's run, or a human revert).
 
 GitHub auto-disables `schedule:`-triggered workflows after 60 days of no
 repository activity (silently — an email, not a visible Actions-tab
