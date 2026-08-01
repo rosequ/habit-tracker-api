@@ -13,6 +13,14 @@ doesn't have `app/static/index.html` yet, this branch (`agent/issue-41`)
 is stacked on `agent/issue-36`, not `main`, and its PR targets
 `agent/issue-36` (PR #39) rather than `main`.
 
+(Note for anyone diffing this branch against `main` rather than against
+`agent/issue-36`'s pre-#41 tip: since #41's PR targeted and already merged
+into this same branch/PR -- not `main` directly -- the diff vs `main` also
+still contains all of #36's original dashboard work described above
+(`app/static/index.html`'s existence, its mount in `app/main.py`,
+`tests/test_dashboard.py`), not just this redesign. That's expected: #36
+and #41 land in `main` together, as one PR (#39).)
+
 ## What this branch changes
 
 Everything is in **`app/static/index.html`** only (markup/CSS/JS) -- no
