@@ -106,6 +106,69 @@ require_plan_staged() {
     fi
 }
 
+# Path patterns that make a diff "UI-facing" for the purposes of
+# warn_ui_screenshot_proof() below (#37): app/static/** (a future dashboard's
+# static assets, e.g. #36), any dir literally named "templates" anywhere in
+# the tree, or app/main.py itself -- today's one file where FastAPI
+# app-level metadata (title, included routers) that shapes what /docs
+# renders actually lives. Deliberately a plain path regex, not
+# content-aware -- cheap and good enough for a soft nudge, not a precise
+# semantic check.
+UI_PATH_PATTERN='^app/static/|(^|/)templates/|^app/main\.py$'
+
+# Soft-flag (warning, never a failing exit) counterpart to require_plan()
+# above: if this branch's diff touches a UI-facing path (per
+# UI_PATH_PATTERN) but neither Plan.md nor the open PR's body mentions
+# anything screenshot/ui-smoke-shaped, print a warning nudging the author to
+# run the relevant `make ui-smoke` check and attach the resulting
+# `.ui-smoke-artifacts/` screenshots to the PR -- see AGENTS.md's
+# "UI-touching PRs need visual proof" convention. Deliberately does not
+# (and structurally cannot) check that a screenshot file actually exists:
+# `.ui-smoke-artifacts/` is git-ignored by design (local proof, not a build
+# artifact), so the diff this function inspects never contains it either
+# way. This is a prose-mention nudge, not proof-of-work verification.
+warn_ui_screenshot_proof() {
+    local merge_base
+    merge_base="$(review_merge_base)"
+
+    local changed_paths
+    changed_paths="$(
+        {
+            git diff --name-only "$merge_base" -- .
+            git ls-files --others --exclude-standard -- .
+        } | sort -u
+    )"
+
+    local ui_paths
+    ui_paths="$(printf '%s\n' "$changed_paths" | grep -E "$UI_PATH_PATTERN" || true)"
+
+    if [[ -z "$ui_paths" ]]; then
+        return 0
+    fi
+
+    local proof_mentioned=0
+    if [[ -f Plan.md ]] && grep -qiE 'screenshot|ui-smoke|ui_smoke' Plan.md; then
+        proof_mentioned=1
+    fi
+    if [[ "$proof_mentioned" -eq 0 ]] && command -v gh >/dev/null 2>&1; then
+        if gh pr view --json body -q '.body' 2>/dev/null | grep -qiE 'screenshot|ui-smoke|ui_smoke'; then
+            proof_mentioned=1
+        fi
+    fi
+
+    if [[ "$proof_mentioned" -eq 0 ]]; then
+        echo "" >&2
+        echo "agent-review-local: WARNING -- this diff touches UI-facing path(s):" >&2
+        printf '%s\n' "$ui_paths" | sed 's/^/    /' >&2
+        echo "  but neither Plan.md nor the PR body mentions screenshot/ui-smoke proof." >&2
+        echo "  Per AGENTS.md's 'UI-touching PRs need visual proof' convention: run the" >&2
+        echo "  relevant 'make ui-smoke' check locally and attach the resulting" >&2
+        echo "  .ui-smoke-artifacts/ screenshots (scripts/ui_smoke_common.py) to the PR" >&2
+        echo "  description. This is a warning only -- it does not fail this check." >&2
+        echo "" >&2
+    fi
+}
+
 # Resolve the GitHub issue this branch/PR is meant to close: explicit ISSUE
 # env var, else a "Closes #N" / "Fixes #N" / "Resolves #N" keyword in the open
 # PR body. Deliberately does NOT grep Plan.md prose for a bare "#N" -- a plan
