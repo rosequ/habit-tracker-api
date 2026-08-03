@@ -6,7 +6,7 @@ from fastapi import Depends
 from app.db.models import Completion
 from app.repository.completions import (
     CompletionRepository,
-    DuplicateCompletionError as RepositoryDuplicateCompletionError,
+    DuplicateCompletionError,
     get_completion_repository,
 )
 from app.repository.habits import HabitRepository, get_habit_repository
@@ -17,10 +17,6 @@ class HabitNotFoundError(Exception):
 
 
 class FutureCompletionDateError(Exception):
-    pass
-
-
-class DuplicateCompletionError(Exception):
     pass
 
 
@@ -42,12 +38,9 @@ class CompletionService:
         if habit is None:
             raise HabitNotFoundError
 
-        try:
-            return await self._completion_repository.create(
-                habit_id=habit_id, completion_date=resolved_date
-            )
-        except RepositoryDuplicateCompletionError as exc:
-            raise DuplicateCompletionError from exc
+        return await self._completion_repository.create(
+            habit_id=habit_id, completion_date=resolved_date
+        )
 
 
 def get_completion_service(
