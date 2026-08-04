@@ -4,7 +4,9 @@
 Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 
 ## Where things live
-- docs/architecture/ — layering rules, conventions
+- docs/architecture/ — layering rules, conventions; see
+  docs/architecture/ARCHITECTURE.md for a birds-eye system overview
+  (domains, request flow, deployment, observability, automation pipeline)
 - docs/adr/ — Architecture Decision Records: the why behind structural
   decisions (see `docs/adr/README.md`). Record a new one here going
   forward instead of only explaining a decision in a workflow/code comment.

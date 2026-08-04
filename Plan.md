@@ -1,68 +1,57 @@
-# Plan: Introduce docs/adr/ (Architecture Decision Records) (issue #26)
+# Plan: Issue #25 — Add ARCHITECTURE.md
 
-## Context
+## Problem
+`docs/architecture/` only has two narrow docs (`api-conventions.md` for
+layering rules, `agent-providers.md` for the agent-provider dispatch
+decision). There's no single birds-eye-view document of the system for
+someone new to the repo. `AGENTS.md` covers adjacent ground but is written
+as operating instructions for agents working *in* the repo, not an
+architecture overview.
 
-Real architecture decisions already exist in this repo (the
-`AGENT_PROVIDER`/`AGENT_PROVIDER_AUTOMERGE` split, the `Plan.md`-before-
-implementation pre-commit gate, the client-side-hooks stopgap for branch
-protection) but they're only documented as prose scattered across
-`AGENTS.md` and `docs/architecture/agent-providers.md`, or not documented
-in a structured way at all. There's also no lightweight format for
-recording *future* decisions, so "explain the why in a workflow comment"
-keeps repeating instead of being captured once, in one place.
+## Change
+Add `docs/architecture/ARCHITECTURE.md`, a new top-level overview doc that
+links out to existing docs rather than duplicating them. Sections:
 
-## What this branch changes
+1. **System summary** — one paragraph: Python 3.14 / FastAPI / SQLModel
+   (async) / Postgres habit-tracking API.
+2. **Request flow** — `routes -> schemas -> services -> repository -> db`,
+   one line per layer's responsibility, linking to
+   `docs/architecture/api-conventions.md` for the enforced rules rather
+   than repeating them.
+3. **Domains** — currently just `habits` (covers the `completions`
+   sub-resource too); link to `docs/domains/habits/README.md`.
+4. **Deployment topology** — prod: Render, via `render.yaml`
+   (`habit-tracker-api` web service + `habit-tracker-db` Postgres,
+   deployed only through `.github/workflows/deploy.yml` on push to `main`,
+   `autoDeploy: false` so it can't race ahead of required checks); local:
+   `make dev` (docker-compose brings up Postgres + Prometheus, uvicorn runs
+   on the host).
+5. **Observability** — `/health` (real `SELECT 1`), `/metrics`
+   (Prometheus text format, `http_requests_total` /
+   `http_request_duration_seconds` labeled by method/handler/status), local
+   Prometheus UI via `make dev`, `make metrics-query`. Note: no logging
+   pipeline yet.
+6. **Automation pipeline map** — one line each for agent-ticket,
+   agent-followup, doc-gardener, garbage-collector, quality-grader (what
+   triggers each, whether it can auto-merge) with an explicit pointer to
+   `AGENTS.md`'s "CI/CD" section for full detail — not a copy of it.
 
-**`docs/adr/template.md`** — standard ADR shape: Title, Status, Context,
-Decision, Consequences. New ADRs are copies of this file.
-
-**`docs/adr/README.md`** — short index explaining what an ADR is, when to
-write one, the naming convention (`NNNN-kebab-title.md`, zero-padded,
-monotonically increasing), and a table listing the ADRs that exist so far.
-
-**`docs/adr/0001-two-agent-provider-variables.md`** — backfills the
-`AGENT_PROVIDER` vs `AGENT_PROVIDER_AUTOMERGE` split, citing
-`docs/architecture/agent-providers.md` and `AGENTS.md`'s CI/CD section as
-prior art for the decision.
-
-**`docs/adr/0002-plan-md-precommit-gate.md`** — backfills the
-`Plan.md`-before-implementation mechanical pre-commit gate
-(`.githooks/pre-commit`, `require_plan_staged` in `scripts/review_common.sh`).
-
-**`docs/adr/0003-client-side-hooks-branch-protection-stopgap.md`** —
-backfills the client-side-hooks stopgap adopted because this repo is
-private/Free-tier and GitHub's server-side branch protection 403s
-(issue #7).
-
-**`AGENTS.md`** — add a short pointer under "Where things live" (or a new
-small section) noting that new architecture decisions get recorded as an
-ADR in `docs/adr/` going forward, referencing the template. Also
-cross-link the existing "Branching" section's pre-commit-gate and
-branch-protection-stopgap prose to ADRs 0002/0003, per
-`agent-review-cloud`'s non-blocking suggestion, so the backfilled ADRs are
-discoverable from the original prose, not only from `docs/adr/README.md`.
-
-**`docs/architecture/agent-providers.md`** — add a one-line cross-reference
-to ADR 0001, same reasoning as above.
-
-**`.gitignore`** — add `/TASK.md` alongside the existing "Claude Code local
-state" entries: this worktree came with an untracked `TASK.md` (the task
-briefing dropped in by the harness, not project content), which the
-review scripts' untracked-file union would otherwise flag as unplanned
-scope on every run in this worktree.
+## Cross-links
+- `README.md`: add a line pointing to `docs/architecture/ARCHITECTURE.md`.
+- `AGENTS.md`'s "Where things live" section: add a bullet pointing to
+  `docs/architecture/ARCHITECTURE.md` as the birds-eye overview, alongside
+  the existing `docs/architecture/` line.
 
 ## Out of scope
-
-- Converting every historical decision into an ADR retroactively — just
-  the three decisions above, enough to establish the pattern.
-- Any change to `.github/workflows/*`, `.githooks/*`, or issues
-  #25/#27/#28/#29 (owned by other in-flight sessions).
+- Rewriting `api-conventions.md` or `agent-providers.md`.
+- `docs/adr/` (#26), doc-gardener extension (#28), or any other
+  issue #26-#29 work — other sessions own those; not touching them even
+  though issue bodies cross-reference this doc.
 
 ## Verification
-
-- `make lint` — docs-only change plus an `AGENTS.md` edit; should pass
-  unchanged (no code touched).
-- `make test` — should pass unchanged (no runtime code touched).
-- `make agent-review-local` / `make agent-review-cloud` — run per the
-  standard loop before pushing/opening the PR.
-- No `make smoke` needed — nothing runtime-relevant is touched.
+- `make lint` (file-size limit applies; keep the doc well under 400 lines
+  by linking out instead of duplicating).
+- `make test`
+- `make agent-review-local`, then `make agent-review-cloud` once clean.
+- No runtime code touched, so `make smoke` is not required by AGENTS.md's
+  loop ("if you touched anything runtime-relevant"); skipping it here.
