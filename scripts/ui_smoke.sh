@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # make ui-smoke: boots the app the same way `make smoke` does, then drives a
-# real headless Playwright browser against the Swagger UI (/docs) instead of
-# curl-ing /health directly.
+# real headless Playwright browser against both the Swagger UI (/docs) and
+# the habits dashboard (/dashboard, issue #36) instead of curl-ing /health
+# directly.
 #
 # Exists because `make smoke` -- and every other check in this repo -- only
 # ever talks to the API directly over HTTP or reads the diff as text. None of
-# them can catch a broken Swagger UI render, a browser console error, or a
-# route that renders fine in the docs page but 500s when a user actually
-# clicks "Try it out" -- those only manifest by driving a real browser
-# against a real running app. See scripts/ui_smoke_check.py for the
-# Playwright side.
+# them can catch a broken UI render, a browser console error, or a route
+# that renders fine but 500s when a user actually interacts with it (e.g.
+# Swagger's "Try it out", or the dashboard's add-habit form / "Mark done
+# today" button) -- those only manifest by driving a real browser against a
+# real running app. See scripts/ui_smoke_check.py for the Playwright side.
 #
 # Local-only by design (see Plan.md) -- not wired into .github/workflows/*.
 # Requires `uv run playwright install chromium` once before first use.
@@ -40,6 +41,14 @@ echo "==> docker-compose up -d"
 # running on those defaults.
 direnv exec . docker-compose up -d
 
+echo "==> alembic upgrade head"
+# The dashboard check (unlike the pre-existing /docs check, which only ever
+# hits /health) exercises POST /habits and POST /habits/{id}/completions for
+# real, so the habits/completions tables must actually exist. `make smoke`
+# gets away without this because /health never touches app tables; this
+# script can't rely on the same assumption once /dashboard is in scope.
+direnv exec . uv run alembic upgrade head
+
 UVICORN_PID=""
 cleanup() {
     if [[ -n "$UVICORN_PID" ]] && kill -0 "$UVICORN_PID" 2>/dev/null; then
@@ -66,5 +75,5 @@ until curl -sf "http://127.0.0.1:${UI_SMOKE_PORT}/health" >/dev/null 2>&1; do
     sleep 0.5
 done
 
-echo "==> driving Playwright against /docs"
+echo "==> driving Playwright against /docs and /dashboard"
 direnv exec . uv run python scripts/ui_smoke_check.py "http://127.0.0.1:${UI_SMOKE_PORT}" "${UI_SMOKE_SCREENSHOT}"

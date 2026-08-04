@@ -36,20 +36,25 @@ Note: The habit completion (check-in) functionality is documented in `docs/domai
   not up, a stale process still bound to the port -- that a text-only diff
   review can never see, because they only manifest by actually running the
   command.
-- `make ui-smoke` — boots the app the same way `make smoke` does, then drives
-  a real headless Playwright browser against the Swagger UI (`/docs`)
-  instead of curl-ing `/health` directly: confirms the page renders with no
-  console errors, lists the expected routes, and that "Try it out" on
-  `GET /health` returns a real response through the browser. Catches a
-  broken UI render or a route that renders but 500s via "Try it out" --
-  neither `make smoke` nor any other check here drives a real browser.
-  Local-only, not wired into CI (issue #29). Needs
+- `make ui-smoke` — boots the app the same way `make smoke` does (plus
+  `alembic upgrade head`, since the dashboard check below needs real
+  tables), then drives a real headless Playwright browser against two
+  pages: the Swagger UI (`/docs`) and the habits dashboard (`/dashboard`,
+  issue #36). On `/docs`: confirms the page renders with no console errors,
+  lists the expected routes, and that "Try it out" on `GET /health` returns
+  a real response through the browser. On `/dashboard`: fills and submits
+  the add-habit form, confirms the new habit appears without a page reload,
+  clicks "Mark done today", and confirms the UI reflects success. Catches a
+  broken UI render or a route/form that renders but 500s when actually
+  used -- neither `make smoke` nor any other check here drives a real
+  browser. Local-only, not wired into CI (issue #29). Needs
   `uv run playwright install chromium` once before first use.
-  `scripts/ui_smoke_common.py`'s `capture_screenshot()` is a reusable
-  helper any Playwright-driven check can call to save a timestamped PNG to
-  the git-ignored `.ui-smoke-artifacts/` directory -- `scripts/ui_smoke_check.py`
-  (the `/docs` check) already uses it; a future check (e.g. a dashboard
-  check) should too rather than reimplementing capture logic (#37).
+  `scripts/ui_smoke_common.py`'s `capture_screenshot(page, check_name, step)`
+  is the one reusable helper both checks call to save a timestamped PNG,
+  every screenshot landing in the git-ignored `.ui-smoke-artifacts/`
+  directory -- five per run (two from `/docs`, three from `/dashboard`).
+  Any future Playwright-driven check should call it too rather than
+  reimplementing capture logic (#37).
 - **UI-touching PRs need visual proof.** Any PR whose diff touches
   UI-facing code (`app/static/**`, any templates dir, or FastAPI
   app-metadata changes affecting what `/docs` renders, e.g. `app/main.py`)

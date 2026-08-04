@@ -1,6 +1,8 @@
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
+from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator, metrics
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +17,17 @@ app = FastAPI(
 )
 
 app.include_router(habits_router)
+
+# Minimal static HTML/JS dashboard (no build step, no framework) that
+# exercises POST/GET /habits and POST /habits/{id}/completions from a real
+# browser -- see app/static/index.html and issue #36. `html=True` makes
+# StaticFiles serve index.html for the mount root itself
+# (GET /dashboard -> app/static/index.html), not just for files reachable
+# by exact name. Additive only: no new app/routes/ endpoint, no business
+# logic -- just serving pre-built static assets, same layering-neutral
+# pattern as /health below.
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/dashboard", StaticFiles(directory=STATIC_DIR, html=True), name="dashboard")
 
 # metrics.default() bundles request count with latency, but hardcodes
 # latency's labels to (method, handler) only -- no status -- to avoid a
