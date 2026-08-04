@@ -10,7 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
 from app.routes.habits import router as habits_router
 
-app = FastAPI(title="Habit Tracker API")
+app = FastAPI(
+    title="Habit Tracker API",
+    description="Track habits and their daily completions.",
+    version="0.1.0",
+)
 
 app.include_router(habits_router)
 
@@ -36,4 +40,4 @@ Instrumentator().add(metrics.requests()).add(metrics.latency()).instrument(app).
 @app.get("/health")
 async def health(session: Annotated[AsyncSession, Depends(get_session)]) -> dict[str, str]:
     await session.execute(text("SELECT 1"))
-    return {"status": "ok"}
+    return {"status": "ok", "version": "0.1.0"}

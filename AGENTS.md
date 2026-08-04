@@ -4,7 +4,12 @@
 Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 
 ## Where things live
-- docs/architecture/ — layering rules, conventions
+- docs/architecture/ — layering rules, conventions; see
+  docs/architecture/ARCHITECTURE.md for a birds-eye system overview
+  (domains, request flow, deployment, observability, automation pipeline)
+- docs/adr/ — Architecture Decision Records: the why behind structural
+  decisions (see `docs/adr/README.md`). Record a new one here going
+  forward instead of only explaining a decision in a workflow/code comment.
 - docs/domains/<name>/ — one README per business domain (e.g. habits)
 - app/routes/ — HTTP layer only
 - app/schemas/ — request/response shapes
@@ -12,7 +17,7 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 - app/repository/ — the ONLY layer allowed to touch app/db/
 - app/db/ — engine, session, SQLModel table definitions
 
-Note: The `completions` domain is documented in `docs/domains/habits/README.md` (section "Habit completion (check-in)") but the API endpoints live in `app/routes/habits.py`
+Note: The habit completion (check-in) functionality is documented in `docs/domains/habits/README.md` (section "Habit completion (check-in)") and the API endpoints for creating completions live in `app/routes/habits.py` under the `/{habit_id}/completions` route
 
 ## Non-negotiable rules (enforced by lint, not memory)
 - Dependency direction: routes -> schemas -> services -> repository -> db
@@ -83,18 +88,20 @@ work as "planned." Both also require the agent CLI for whichever
 This is a private repo on GitHub's Free plan, which doesn't support server-side
 branch protection at all (see issue #7) -- there is nothing stopping a direct
 `git push` to `main`, or a push of any branch that skips lint/tests/review.
-As a stopgap, run `git config core.hooksPath .githooks` once per clone: it
-installs two client-side hooks (still bypassable locally -- `--no-verify`,
-or just not enabling `core.hooksPath` -- same limitation as the branch
-protection gap above):
+As a stopgap (see [ADR 0003](docs/adr/0003-client-side-hooks-branch-protection-stopgap.md)
+for the full decision record), run `git config core.hooksPath .githooks`
+once per clone: it installs two client-side hooks (still bypassable
+locally -- `--no-verify`, or just not enabling `core.hooksPath` -- same
+limitation as the branch protection gap above):
 - `pre-commit` — refuses to commit if `make lint` fails (override once with
   `SKIP_COMMIT_LINT=1 git commit ...`), and separately refuses to commit any
   tracked file other than `Plan.md` unless `Plan.md` has *already* been
   touched somewhere on this branch (this commit or an earlier one) --
   mechanically enforces writing/updating the plan before implementing,
   not backfilling it afterward, though it can't check the plan's content is
-  actually accurate (that's `agent-review-local`'s job, at push time).
-  Override once with `SKIP_COMMIT_PLAN_CHECK=1 git commit ...`.
+  actually accurate (that's `agent-review-local`'s job, at push time). See
+  [ADR 0002](docs/adr/0002-plan-md-precommit-gate.md) for why this gate
+  exists. Override once with `SKIP_COMMIT_PLAN_CHECK=1 git commit ...`.
 - `pre-push` — refuses to push directly to `main` (override once with
   `ALLOW_PUSH_TO_MAIN=1 git push ...` if you really mean to; only bypasses
   the main-push block, not the check below). Separately, refuses to push
@@ -111,6 +118,28 @@ protection gap above):
   not on every push of routine work.
 
 Always work on a branch and open a PR instead of pushing to `main` directly.
+
+## Archiving plans
+
+`Plan.md` (and often `Implement.md`) is mechanically required per-branch
+(see `require_plan_staged` above), but every new branch/worktree just
+overwrites them, so nothing keeps a running record across branches --
+`git log --oneline -- Plan.md` shows it's been rewritten on essentially
+every feature branch. `docs/plans/` is that record.
+
+This is a **manual convention**, not automated: right before merging a PR
+(after the last `Plan.md`/`Implement.md` update, before `gh pr merge`), run
+`make archive-plan` (or `bash scripts/archive_plan.sh [slug]` directly). It
+copies the branch's `Plan.md` (and `Implement.md`, if present) into
+`docs/plans/<issue-or-date>-<slug>.md` -- see `docs/plans/README.md` for
+the exact naming rules. Commit the resulting file as part of that same PR.
+
+This was deliberately not wired into `ci.yml`'s merge path or a new git
+hook: "this branch is about to merge" is a human/agent judgment call made
+once, not something reliably inferable from inside a single commit/push
+hook without either false-triggering early or missing the final update. A
+skipped archive doesn't break anything -- it just means that branch's plan
+is lost the same way it always has been before this existed.
 
 ## Observability (local)
 - `/metrics` — Prometheus text-format metrics on the running app, wired

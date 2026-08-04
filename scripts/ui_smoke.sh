@@ -17,10 +17,16 @@
 #
 # Runs on UI_SMOKE_PORT (default 8099), distinct from both APP_PORT and
 # SMOKE_PORT so all three can run at the same time without colliding.
+#
+# Optional: set UI_SMOKE_SCREENSHOT to a file path to also save a screenshot
+# of the /docs header (title/version/description block) there -- purely for
+# visual proof-of-work evidence, e.g. a before/after image attached to a PR
+# description. Doesn't affect pass/fail when unset.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 UI_SMOKE_PORT="${UI_SMOKE_PORT:-8099}"
+UI_SMOKE_SCREENSHOT="${UI_SMOKE_SCREENSHOT:-}"
 
 if lsof -nP -iTCP:"$UI_SMOKE_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "ui_smoke: port $UI_SMOKE_PORT is already in use. Set UI_SMOKE_PORT to a free port and retry." >&2
@@ -70,4 +76,4 @@ until curl -sf "http://127.0.0.1:${UI_SMOKE_PORT}/health" >/dev/null 2>&1; do
 done
 
 echo "==> driving Playwright against /docs and /dashboard"
-direnv exec . uv run python scripts/ui_smoke_check.py "http://127.0.0.1:${UI_SMOKE_PORT}"
+direnv exec . uv run python scripts/ui_smoke_check.py "http://127.0.0.1:${UI_SMOKE_PORT}" "${UI_SMOKE_SCREENSHOT}"

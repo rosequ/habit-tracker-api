@@ -34,7 +34,7 @@ CHECK_NAME_DOCS = "docs"
 CHECK_NAME_DASHBOARD = "dashboard"
 
 
-def check_docs(browser: Browser, base_url: str) -> int:
+def check_docs(browser: Browser, base_url: str, screenshot_path: str | None = None) -> int:
     console_errors: list[str] = []
     page = browser.new_page()
     page.on(
@@ -56,6 +56,13 @@ def check_docs(browser: Browser, base_url: str) -> int:
             print(f"ui_smoke: FAIL -- expected route '{route}' not found on /docs", file=sys.stderr)
             page.close()
             return 1
+
+    if screenshot_path:
+        # Swagger UI's ".information-container" wraps the title, version
+        # badge, and description block -- cropping the screenshot to it
+        # (rather than the full viewport) keeps the before/after image
+        # focused on what this change actually affects.
+        page.locator(".information-container").screenshot(path=screenshot_path)
 
     loaded_screenshot = capture_screenshot(page, CHECK_NAME_DOCS, "loaded")
     print(f"ui_smoke: screenshot saved to {loaded_screenshot}")
@@ -200,11 +207,17 @@ def check_dashboard(browser: Browser, base_url: str) -> int:
 
 def main() -> int:
     base_url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8099"
+    # Optional: path to save a screenshot of the /docs header (title +
+    # version badge + description block) to. Not used by pass/fail logic --
+    # purely for producing visual proof-of-work evidence (e.g. a before/after
+    # image attached to a PR description) without changing `make ui-smoke`'s
+    # default behavior when this arg is omitted.
+    screenshot_path = sys.argv[2] if len(sys.argv) > 2 else None
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
 
-        docs_result = check_docs(browser, base_url)
+        docs_result = check_docs(browser, base_url, screenshot_path)
         dashboard_result = check_dashboard(browser, base_url)
 
         browser.close()
