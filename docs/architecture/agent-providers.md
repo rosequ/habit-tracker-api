@@ -8,6 +8,9 @@ two local review scripts (`agent_review_local.sh`, `agent_review_cloud.sh`)
 `claude -p` directly. An `AGENT_PROVIDER` env var picks the backend in that
 one place.
 
+See [ADR 0001](../adr/0001-two-agent-provider-variables.md) for the
+decision record on *why* the two variables below are split rather than one.
+
 **Two separate repository variables feed it, not one:**
 - `vars.AGENT_PROVIDER` — read by `agent-ticket.yml`, `agent-followup.yml`,
   and `quality-grader.yml`. None of these three ever auto-merge (every PR

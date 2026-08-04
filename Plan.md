@@ -77,6 +77,11 @@ this further, but rejected it:
   (`review_full_diff` in `scripts/review_common.sh`) — without this, that
   file trips the check as an "unplanned" untracked addition even though it
   was never meant to be committed by any of the sibling sessions either.
+  (Note: after merging `origin/main`, this no longer shows as a diff vs
+  `main` -- another sibling branch added the identical `.gitignore` line
+  independently and already merged. The change described here is real and
+  still this branch's own original work; it just has zero net diff left
+  once both sides agree.)
 
 ## Out of scope
 
