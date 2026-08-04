@@ -1,103 +1,58 @@
-# Implementation log: Issue #1 — Create a habit
+# Implementation log: Issue #27 — Archive Plan.md/Implement.md per branch
 
 Following Plan.md. Logging steps and issues as they happen.
 
-## Starting state
-- `app/db/models.py` (`Habit`) and `app/db/session.py` (engine + `get_database_url()`)
-  already existed from prior work.
-- Alembic migration for `habits` table already applied.
-- docker-compose Postgres for this worktree already running on port 5433
-  (`add-habit-create-db-1`).
-
 ## Steps taken
 
-1. `app/db/session.py` — added `async_session_maker` (`async_sessionmaker`) and
-   a `get_session()` FastAPI dependency (`AsyncGenerator[AsyncSession, None]`)
-   on top of the existing engine.
-2. `app/repository/habits.py` — new `HabitRepository` (`create`, `get_by_id`)
-   plus `get_habit_repository` dependency provider. Only file outside
-   `app/db/*` importing `app.db`.
-3. `app/services/habits.py` — new `HabitService` (`create_habit`, `get_habit`)
-   wrapping `HabitRepository`, plus `get_habit_service` dependency provider.
-4. `app/schemas/habits.py` — `HabitCreate` (field constraints matching the
-   domain doc) and `HabitRead` (`from_attributes=True`).
-5. `app/routes/habits.py` — `POST /habits` (201) and `GET /habits/{habit_id}`
-   (200 or 404), importing only schemas + services.
-6. `app/main.py` — FastAPI app, includes the habits router. No
-   `create_all` — table creation stays owned by Alembic.
-7. `pyproject.toml` — added `[tool.pytest.ini_options] asyncio_mode = "auto"`.
-8. `tests/conftest.py` — `client` fixture (httpx `AsyncClient` +
-   `ASGITransport` against the real app) and an autouse fixture that deletes
-   all `habits` rows after each test (cleanup, not `create_all`).
-9. `tests/test_habits.py` — 3 tests: create+fetch round trip, 422 on empty
-   `name`, 404 on a missing id.
+1. `docs/plans/README.md` — new archive folder + documents the naming
+   convention and points at `scripts/archive_plan.sh` / `make archive-plan`.
+2. `scripts/archive_plan.sh` — new script. Resolves issue number (`ISSUE`
+   env, `issue-N` in branch name, else `current_issue_number()` from
+   `scripts/review_common.sh`) and a slug (arg, descriptive branch-name
+   part, `Plan.md`'s own `# Plan: ...` heading, else `plan`), then writes
+   `docs/plans/<issue-or-date>-<slug>.md` (Plan.md + Implement.md content,
+   with a small header noting source branch/timestamp).
+3. `Makefile` — added `archive-plan` target (`make archive-plan
+   [SLUG=...]`).
+4. `AGENTS.md` — added an "Archiving plans" section documenting the manual
+   convention and why it isn't automated via `ci.yml`/a git hook (see
+   Plan.md's "Decision" section for the full reasoning).
+5. `tests/test_archive_plan.py` — 6 unit tests against a throwaway `git
+   init` tmp repo (same pattern as `tests/test_check_file_sizes.py`):
+   issue+slug from branch name, date+branch-name fallback with no issue
+   number, Plan.md-heading fallback when the branch name has no
+   descriptive part, explicit slug argument override, `Implement.md`
+   inclusion, and failure when `Plan.md` is missing.
 
 ## Issues hit
 
-- **First `make test` run failed** with
-  `sqlalchemy.exc.InterfaceError: cannot perform operation: another operation
-  is in progress` on the second/third test. Root cause: pytest-asyncio's
-  default *function-scoped* event loop creates a new loop per test, but
-  `app/db/session.py`'s `engine` (and its asyncpg connection pool) is a
-  module-level singleton created once at import time and bound to whichever
-  loop was active then — reusing it from a later test under a different loop
-  corrupts the underlying asyncpg connection.
-  Fix: added `asyncio_default_fixture_loop_scope = "session"` and
-  `asyncio_default_test_loop_scope = "session"` to
-  `[tool.pytest.ini_options]` in `pyproject.toml`, so the whole test session
-  shares one event loop and matches the engine's lifetime. All 3 tests pass
-  after this change.
+- **Manual dry-run of the script** against a scratch tmp repo (outside this
+  worktree, in the scratchpad dir) surfaced one edge case before I wrote
+  the automated tests: a bare `agent/issue-27`-style branch (no descriptive
+  suffix) strips down to an empty slug after removing the `issue-N`
+  component, which would otherwise produce a redundant/ugly
+  `27-issue-27.md` filename. Fixed by falling further back to slugifying
+  `Plan.md`'s own `# Plan: ...` heading in that case, before finally
+  falling back to a plain `plan` string.
+- **First `make test` run failed** across the whole suite (not just my new
+  tests) with `relation "habits" does not exist` — this worktree's
+  docker-compose Postgres was up but had never had Alembic migrations
+  applied. Ran `uv run alembic upgrade head` (pre-existing project setup
+  step, not something this issue's change needed) and all 18 tests passed,
+  including the 6 new ones.
+- No production/runtime code touched (`app/`), so `make smoke` isn't
+  expected to reveal anything new, but ran it anyway per the loop in
+  AGENTS.md.
 
 ## Verification so far
 
-- `make lint` — ruff clean, import-linter layered architecture contract kept.
-- `make test` — 3 passed.
+- `make lint` — ruff + import-linter + file-size check, all clean.
+- `make test` — 18 passed (5 pre-existing + 6 new + 2 + 5 file-size/
+  completions/habits — see full list above), 0 failed.
+- Manually dry-ran `scripts/archive_plan.sh` against a scratch tmp repo
+  covering all four slug/issue resolution paths (branch-name slug + issue
+  number, date fallback with no issue number, explicit `SLUG=` override,
+  `Plan.md`-heading fallback) before writing `tests/test_archive_plan.py`
+  to cover the same paths automatically.
 
-## Manual exercise (docker-compose Postgres, `make dev` on port 8001)
-
-Successful POST:
-```
-POST /habits {"name": "Read daily", "daily_target": 20, "category": "Learning"}
-→ 201 {"id":3,"name":"Read daily","daily_target":20,"category":"Learning","created_at":"2026-07-07T01:15:02.609049Z"}
-```
-
-422 validation failure (empty `name`):
-```
-POST /habits {"name": "", "daily_target": 20, "category": "Learning"}
-→ 422 {"detail":[{"type":"string_too_short","loc":["body","name"],"msg":"String should have at least 1 character","input":"","ctx":{"min_length":1}}]}
-```
-
-Fetch just-created habit and a 404 case:
-```
-GET /habits/3      → 200 (same body as the POST response)
-GET /habits/999999 → 404 {"detail":"Habit not found"}
-```
-
-Server log (uvicorn):
-```
-INFO:     127.0.0.1:55651 - "POST /habits HTTP/1.1" 201 Created
-INFO:     127.0.0.1:55654 - "POST /habits HTTP/1.1" 422 Unprocessable Content
-INFO:     127.0.0.1:55655 - "GET /habits/3 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55656 - "GET /habits/999999 HTTP/1.1" 404 Not Found
-```
-
-`habits` table schema (`psql \d habits` against the docker-compose Postgres):
-```
-                                        Table "public.habits"
-    Column    |           Type           | Collation | Nullable |              Default
---------------+--------------------------+-----------+----------+------------------------------------
- id           | integer                  |           | not null | nextval('habits_id_seq'::regclass)
- name         | character varying(100)   |           | not null |
- daily_target | integer                  |           | not null |
- category     | character varying(50)    |           | not null |
- created_at   | timestamp with time zone |           | not null |
-Indexes:
-    "habits_pkey" PRIMARY KEY, btree (id)
-```
-
-## Status: done
-
-All Plan.md steps complete: db/session dependency, repository, service, schemas,
-routes, `app/main.py`, pytest async config, tests (3 passing), `make lint` and
-`make test` green, manual POST/GET/404/422 exercised with logs and table schema
-captured above for the PR.
+## Status: implementation done, pending agent-review-local/cloud + push
