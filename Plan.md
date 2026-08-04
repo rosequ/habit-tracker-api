@@ -1,102 +1,55 @@
-# Plan: Archive each branch's Plan.md/Implement.md (issue #27)
+# Plan: Issue #28 — Extend doc-gardener.yml to reconcile against accepted ADRs
 
-## Context
+## What
+`doc-gardener.yml`'s prompt currently tells the agent to compare
+`AGENTS.md` + `docs/` against one source of truth: the actual code. Once
+`docs/adr/` (issue #26) and `docs/architecture/ARCHITECTURE.md` (issue #25)
+exist, an **Accepted** ADR is a second source of truth that should also
+propagate into `ARCHITECTURE.md`/`AGENTS.md`, the same way a code change
+does today.
 
-`Plan.md` (and often `Implement.md`) is mechanically required per-branch by
-`require_plan_staged` in `.githooks/pre-commit`, but every new
-branch/worktree just overwrites these files. `git log --oneline -- Plan.md`
-confirms it's been rewritten on essentially every feature branch, so
-whatever isn't captured in a squashed PR description is effectively lost.
+## Why the mechanics don't need to change
+- The `docs_tree` shell snippet already does
+  `find docs -type f -name '*.md' -not -path 'docs/quality.md' ...` — that
+  already recursively includes `docs/adr/*.md` and
+  `docs/architecture/ARCHITECTURE.md` once they exist. Nothing to change
+  there.
+- `scripts/gate_and_merge.sh` is invoked with
+  `--require-path-prefix docs/` and `--require-exact-path AGENTS.md` — any
+  path under `docs/adr/` or `docs/architecture/` already satisfies that
+  prefix. Nothing to change there either, and per the issue this
+  mechanical enforcement must not be weakened.
 
-## Decision: standalone script + documented manual convention, NOT a `ci.yml` step
+## What actually changes
+Only `.github/workflows/doc-gardener.yml`: the prompt text embedded in the
+`Ask the agent to garden the docs` step, plus the file's top-of-file
+descriptive comment (kept in sync with the new behavior, same as it
+already documents the rest of the job):
+- Add a new paragraph telling the agent to treat any `docs/adr/*.md` file
+  whose front matter says `Status: Accepted` as an additional
+  authoritative source (alongside the actual code) when checking
+  `ARCHITECTURE.md`/`AGENTS.md` for staleness or contradictions.
+- Explicitly instruct it to ignore ADRs that are `Proposed`/draft/anything
+  other than `Accepted` — not yet decided, not to be reconciled against.
+- Explicitly instruct it to never author a new ADR and never edit anything
+  under `docs/adr/` itself — that directory is a historical record it
+  reads *from*, not a target it writes *to*. (The existing hard scope
+  limit paragraph — only `docs/`/`AGENTS.md`, never `docs/quality.md`,
+  never code, mechanically enforced by `gate_and_merge.sh` — is left
+  otherwise unchanged.)
 
-The issue itself suggests wiring this into `ci.yml`'s merge path, but
-editing `.github/workflows/*` is explicitly off-limits for this issue in
-this batch (unlike issue #28, which has a separately-approved exception).
-Given that constraint, I'm implementing this as:
+(`Plan.md` itself is, as always, also updated to describe this branch's
+change — every branch in this repo overwrites its own root-level `Plan.md`;
+that's mechanical, not additional scope.)
 
-- `scripts/archive_plan.sh` — a standalone script that copies the current
-  branch's `Plan.md` (and `Implement.md`, if present) into
-  `docs/plans/<issue-or-date>-<slug>.md`.
-- A documented manual convention in `AGENTS.md` ("Archiving plans" section):
-  run `make archive-plan` right before merging a PR (after the last
-  `Plan.md`/`Implement.md` update, before `gh pr merge`), then commit the
-  resulting `docs/plans/*.md` file as part of that same PR.
-
-I considered instead adding a new git hook (e.g. `post-commit`) to automate
-this further, but rejected it:
-- The two hooks I'm allowed to touch are explicitly limited to
-  `pre-commit`/`pre-push`, and neither of those is a natural place to
-  detect "this branch is about to merge" — that's a merge-time decision,
-  not a commit/push-time one, and guessing wrong (e.g. archiving on every
-  commit) would spam `docs/plans/` with half-finished plans instead of
-  final ones.
-- Doing it well would require knowing which commit is the *last* one before
-  merge, which isn't knowable from inside a single hook invocation without
-  either false-triggering early or missing the final update — a human/agent
-  judgment call ("I'm about to merge this PR now") is simpler and more
-  reliable than trying to infer that mechanically here.
-- The issue text itself frames "a small script + documented manual
-  convention" as an acceptable alternative to CI automation if "automating
-  it isn't worth the complexity" — that's the case here, given the
-  restriction on editing workflows/hooks for this issue.
-
-## What this branch changes
-
-- **`docs/plans/README.md`** — new archive folder, documents the naming
-  convention (`<issue-or-date>-<slug>.md`) and points at
-  `scripts/archive_plan.sh` / `make archive-plan`.
-- **`scripts/archive_plan.sh`** — new script:
-  - Resolves an issue number: `ISSUE` env var, else `issue-N` parsed out of
-    the branch name (matches `agent-ticket.yml`'s branch convention), else
-    `current_issue_number()` from `scripts/review_common.sh` (an open PR's
-    "Closes #N" body).
-  - Resolves a slug: optional `$1` arg, else the descriptive part of the
-    branch name, else the `# Plan: ...` heading in `Plan.md`, else a plain
-    `plan` fallback — never fails the whole script just because a slug
-    couldn't be inferred well.
-  - Falls back to today's date (`YYYY-MM-DD`) as the prefix when no issue
-    number can be resolved.
-  - Writes `docs/plans/<prefix>-<slug>.md`: `Plan.md`'s content, then
-    (if present) `Implement.md`'s content below a separator, with a small
-    header noting the source branch and archive timestamp.
-- **`Makefile`** — new `archive-plan` target wrapping the script
-  (`make archive-plan` or `make archive-plan SLUG=my-slug`).
-- **`AGENTS.md`** — new "Archiving plans" section documenting the manual
-  convention (when to run it, what it does, why it's manual not automated
-  here).
-- **`tests/test_archive_plan.py`** — unit tests against a throwaway `git
-  init` tmp repo (same pattern as `tests/test_check_file_sizes.py`):
-  issue number parsed from branch name, slug fallback to the `Plan.md`
-  heading when the branch name has no descriptive part, explicit slug
-  argument override, and `Implement.md` being included when present.
-- **`.gitignore`** — added `TASK.md` (this session's harness-injected task
-  briefing, untracked in every parallel worktree for this batch of issues).
-  `agent-review-local`/`agent-review-cloud`'s diff check deliberately unions
-  in untracked files so a forgotten `git add` can't hide scope
-  (`review_full_diff` in `scripts/review_common.sh`) — without this, that
-  file trips the check as an "unplanned" untracked addition even though it
-  was never meant to be committed by any of the sibling sessions either.
-  (Note: after merging `origin/main`, this no longer shows as a diff vs
-  `main` -- another sibling branch added the identical `.gitignore` line
-  independently and already merged. The change described here is real and
-  still this branch's own original work; it just has zero net diff left
-  once both sides agree.)
-
-## Out of scope
-
-- Editing `.github/workflows/*`, `.githooks/pre-commit`, or
-  `.githooks/pre-push` (per this issue's explicit constraint).
-- Changing the existing `require_plan_staged` gate itself.
-- Backfilling `docs/plans/` for already-merged historical branches (#1, #3,
-  #15, #18, #19, ...) — out of scope per the issue; only new archiving
-  going forward.
-- Issues #25/#26/#28/#29 — other sessions own those.
+## Out of scope (explicitly not doing)
+- Not creating `docs/adr/` or `ARCHITECTURE.md` — those land from #26/#25
+  in parallel worktrees.
+- Not touching any other workflow file, `.githooks/pre-commit`,
+  `.githooks/pre-push`, or `scripts/gate_and_merge.sh`.
+- Not implementing #25/#26/#27/#29.
 
 ## Verification
-
-- `make lint` — ruff + import-linter + file-size check.
-- `make test` — unit tests, including the new `tests/test_archive_plan.py`.
-- No runtime/app code touched, so `make smoke` isn't expected to catch
-  anything new, but I'll run it anyway since it's cheap.
-- `make agent-review-local` / `make agent-review-cloud` before pushing.
+Since this is a workflow-prompt-only change with no runtime code touched,
+`make smoke` isn't relevant. Run `make lint`, `make test`,
+`make agent-review-local`, then `make agent-review-cloud`.
