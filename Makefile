@@ -1,4 +1,4 @@
-.PHONY: dev smoke ui-smoke lint lint-docs test test-integration metrics-query agent-review-local agent-review-cloud
+.PHONY: dev smoke ui-smoke lint lint-docs test test-integration metrics-query agent-review-local agent-review-cloud archive-plan
 
 dev:
 	docker-compose up -d
@@ -49,3 +49,9 @@ agent-review-local:
 # Run this once agent-review-local passes clean.
 agent-review-cloud:
 	@bash scripts/agent_review_cloud.sh
+
+# Archives the current branch's Plan.md/Implement.md into docs/plans/ --
+# run right before merging a PR. See AGENTS.md's "Archiving plans" section.
+# Usage: make archive-plan [SLUG=my-slug]
+archive-plan:
+	@bash scripts/archive_plan.sh $(SLUG)
