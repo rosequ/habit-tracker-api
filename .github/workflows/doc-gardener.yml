@@ -3,9 +3,12 @@ name: Doc Gardener
 # Runs daily. Headless Claude Code scans docs/ and AGENTS.md for staleness or
 # contradictions with the actual code (a documented endpoint that no longer
 # exists, an outdated architecture description, a broken cross-reference) and
-# fixes them. Auto-merges if -- and only if -- the fix stays entirely within
-# docs/ + AGENTS.md and the inline fast-gates-equivalent checks pass; anything
-# else falls back to needs-human-review (see scripts/gate_and_merge.sh).
+# fixes them. It also reconciles docs/architecture/ARCHITECTURE.md and
+# AGENTS.md against any docs/adr/*.md whose Status is Accepted -- a second
+# source of truth alongside the code (see the prompt below). Auto-merges if
+# -- and only if -- the fix stays entirely within docs/ + AGENTS.md and the
+# inline fast-gates-equivalent checks pass; anything else falls back to
+# needs-human-review (see scripts/gate_and_merge.sh).
 #
 # This can't use gh pr merge --auto: that feature's "wait for required
 # checks" semantics only exist via branch protection, which 403s on this
@@ -113,6 +116,22 @@ jobs:
           code; a "future work" or "out of scope" note describing something
           that has since actually shipped; a cross-reference (file path,
           issue number, command name) that's now broken or wrong.
+
+          Second source of truth -- accepted architecture decision records:
+          if docs/adr/ contains files, treat any ADR whose front matter says
+          "Status: Accepted" as authoritative input too, the same way the
+          actual code is. If an accepted ADR changed a decision -- e.g. the
+          agent-provider split, or the routes -> schemas -> services ->
+          repository -> db layering rules -- and
+          docs/architecture/ARCHITECTURE.md and/or AGENTS.md hasn't caught
+          up with it, fix the stale doc so it matches the accepted ADR's
+          decision, the same way you'd fix a doc that's out of sync with
+          the code. Ignore any ADR whose status is "Proposed", draft, or
+          anything other than "Accepted" -- it isn't decided yet, so don't
+          reconcile docs against it and don't act on it at all. Never
+          author a new ADR yourself, and never edit any file under
+          docs/adr/ -- that directory is a historical record you reconcile
+          docs FROM, never a target you write TO.
 
           Hard scope limit: only ever edit files under docs/ or AGENTS.md
           itself, with ONE exception: never touch docs/quality.md. That file
