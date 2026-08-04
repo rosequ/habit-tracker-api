@@ -1,58 +1,68 @@
-# Plan: Add timeout-minutes to all agent-driven CI jobs
+# Plan: Introduce docs/adr/ (Architecture Decision Records) (issue #26)
 
 ## Context
 
-Issue #23 ("Add GET /habits/{habit_id}/completions") was labeled
-`agent-ready` and picked up by `agent-ticket.yml` (run 30206804182). It hung
-on the "Ask the agent to implement the issue" step and never completed --
-GitHub eventually killed it at its hard 6-hour job ceiling
-("The job has exceeded the maximum execution time of 6h0m0s"), with no PR
-opened and no error surfaced anywhere a human would see it short of opening
-the Actions tab.
-
-The same thing happened the same day to a Doc Gardener rerun (run
-30079528989, also killed at 6h0m0s), and again the next day to three more
-`agent-ticket.yml` runs (issues #35, #36, #37) that each ran 35-50+ minutes
-before being stopped. `scripts/run_agent.sh`'s `run_north()` path (OpenCode
-CLI against OpenRouter) has no internal timeout, so if that endpoint stalls
-or is rate-limited, the calling job just sits -- there's nothing between
-"a couple minutes" and "6 hours."
-
-Every healthy run observed so far (`agent-ticket.yml` on issues #8, #19;
-`doc-gardener.yml`'s successful run) finished well under 10 minutes on the
-agent step specifically, and well under 15 minutes end to end including
-lint/test/smoke.
+Real architecture decisions already exist in this repo (the
+`AGENT_PROVIDER`/`AGENT_PROVIDER_AUTOMERGE` split, the `Plan.md`-before-
+implementation pre-commit gate, the client-side-hooks stopgap for branch
+protection) but they're only documented as prose scattered across
+`AGENTS.md` and `docs/architecture/agent-providers.md`, or not documented
+in a structured way at all. There's also no lightweight format for
+recording *future* decisions, so "explain the why in a workflow comment"
+keeps repeating instead of being captured once, in one place.
 
 ## What this branch changes
 
-Adds `timeout-minutes: 30` to the single job in each of the five
-agent-driven workflows, so a stuck agent call fails loud in ~30 minutes
-instead of silently occupying a runner for up to 6 hours:
+**`docs/adr/template.md`** — standard ADR shape: Title, Status, Context,
+Decision, Consequences. New ADRs are copies of this file.
 
-- **`.github/workflows/agent-ticket.yml`** (`implement` job)
-- **`.github/workflows/agent-followup.yml`** (`fix-and-pr` job)
-- **`.github/workflows/doc-gardener.yml`** (`garden` job)
-- **`.github/workflows/garbage-collector.yml`** (`collect` job)
-- **`.github/workflows/quality-grader.yml`** (`grade` job)
+**`docs/adr/README.md`** — short index explaining what an ADR is, when to
+write one, the naming convention (`NNNN-kebab-title.md`, zero-padded,
+monotonically increasing), and a table listing the ADRs that exist so far.
 
-30 minutes is roughly 3x the slowest healthy run-time observed, leaving
-headroom for a legitimately slow-but-working call while still cutting off
-a genuine hang well short of the 6-hour ceiling.
+**`docs/adr/0001-two-agent-provider-variables.md`** — backfills the
+`AGENT_PROVIDER` vs `AGENT_PROVIDER_AUTOMERGE` split, citing
+`docs/architecture/agent-providers.md` and `AGENTS.md`'s CI/CD section as
+prior art for the decision.
+
+**`docs/adr/0002-plan-md-precommit-gate.md`** — backfills the
+`Plan.md`-before-implementation mechanical pre-commit gate
+(`.githooks/pre-commit`, `require_plan_staged` in `scripts/review_common.sh`).
+
+**`docs/adr/0003-client-side-hooks-branch-protection-stopgap.md`** —
+backfills the client-side-hooks stopgap adopted because this repo is
+private/Free-tier and GitHub's server-side branch protection 403s
+(issue #7).
+
+**`AGENTS.md`** — add a short pointer under "Where things live" (or a new
+small section) noting that new architecture decisions get recorded as an
+ADR in `docs/adr/` going forward, referencing the template. Also
+cross-link the existing "Branching" section's pre-commit-gate and
+branch-protection-stopgap prose to ADRs 0002/0003, per
+`agent-review-cloud`'s non-blocking suggestion, so the backfilled ADRs are
+discoverable from the original prose, not only from `docs/adr/README.md`.
+
+**`docs/architecture/agent-providers.md`** — add a one-line cross-reference
+to ADR 0001, same reasoning as above.
+
+**`.gitignore`** — add `/TASK.md` alongside the existing "Claude Code local
+state" entries: this worktree came with an untracked `TASK.md` (the task
+briefing dropped in by the harness, not project content), which the
+review scripts' untracked-file union would otherwise flag as unplanned
+scope on every run in this worktree.
 
 ## Out of scope
 
-- Retrying or backing off within `run_agent.sh`/`run_north()` itself --
-  that's a deeper change to the OpenCode CLI invocation; this branch only
-  bounds the outer CI job.
-- Alerting/notification on workflow failure (there currently isn't any,
-  for any workflow) -- a real gap, but a separate concern from bounding
-  run time.
-- Re-triggering issue #23 -- done separately (relabel `agent-ready`) once
-  this fix is merged, not part of this diff.
+- Converting every historical decision into an ADR retroactively — just
+  the three decisions above, enough to establish the pattern.
+- Any change to `.github/workflows/*`, `.githooks/*`, or issues
+  #25/#27/#28/#29 (owned by other in-flight sessions).
 
 ## Verification
 
-- `make lint` -- passes (no app code touched, workflow YAML only).
-- Each edited file: confirmed `timeout-minutes` sits at the job level
-  (same indentation as `runs-on`), not nested under `services` or a step,
-  by inspection of each diff.
+- `make lint` — docs-only change plus an `AGENTS.md` edit; should pass
+  unchanged (no code touched).
+- `make test` — should pass unchanged (no runtime code touched).
+- `make agent-review-local` / `make agent-review-cloud` — run per the
+  standard loop before pushing/opening the PR.
+- No `make smoke` needed — nothing runtime-relevant is touched.
