@@ -55,6 +55,8 @@ per-worktree via `.envrc` (`DB_PORT`, `APP_PORT`, `PROMETHEUS_PORT`).
 `make smoke` does the same but headless, for a one-shot boot-and-`/health`
 check.
 
+**Security** — Every request flows through the layering: `routes -> schemas -> services -> repository -> db`. The `/health` endpoint is a special case that directly uses a DB session to verify database connectivity, which is an acceptable exception to the strict layering because it's a lightweight health check that doesn't expose business logic or database schema details.
+
 ## Observability
 
 - `/health` — runs a real `SELECT 1` against Postgres; used as the Render
