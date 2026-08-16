@@ -8,8 +8,14 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
   docs/architecture/ARCHITECTURE.md for a birds-eye system overview
   (domains, request flow, deployment, observability, automation pipeline)
 - docs/adr/ — Architecture Decision Records: the why behind structural
-  decisions (see `docs/adr/README.md`). Record a new one here going
-  forward instead of only explaining a decision in a workflow/code comment.
+  decisions (see `docs/adr/README.md`). **Only records whose Status:
+  "Accepted" are treated as authoritative inputs, the same way the
+  actual code is.** If an accepted ADR changed a decision and
+  docs/architecture/ARCHITECTURE.md and/or AGENTS.md hasn't caught
+  up with it, fix the stale doc so it matches the accepted ADR's
+  decision.
+  - ADR 0001 (accepted) — see `docs/adr/0001-two-agent-provider-variables.md`
+    for the split between `AGENT_PROVIDER` and `AGENT_PROVIDER_AUTOMERGE`.
 - docs/domains/<name>/ — one README per business domain (e.g. habits)
 - app/routes/ — HTTP layer only
 - app/schemas/ — request/response shapes
