@@ -28,7 +28,7 @@ for a specific date and represents one successful check-in for that habit.
 Endpoint: `POST /habits/{habit_id}/completions`
 
 **Request body:**
-- `completion_date` (optional, date string): Defaults to today if omitted
+- `completion_date` (optional, date string): If omitted, defaults to today
 
 **Response:**
 - HTTP 201 on success
@@ -40,6 +40,8 @@ Endpoint: `POST /habits/{habit_id}/completions`
 - "Habit not found" (404)
 - "Completion date cannot be in the future" (422)
 - "Completion already recorded for this habit and date" (409)
+
+**Response model:** `CompletionRead` with fields: `id`, `habit_id`, `completion_date`, `created_at`
 
 ## Related tickets
 - "Create a habit (name, daily target, category)" — GitHub Issue #1
