@@ -148,11 +148,13 @@ skipped archive doesn't break anything -- it just means that branch's plan
 is lost the same way it always has been before this existed.
 
 ## Observability (local)
+- `/health` — runs a real `SELECT 1` against Postgres; used as the Render
+  health check and by `make smoke`.
 - `/metrics` — Prometheus text-format metrics on the running app, wired
-  directly on `app` like `/health`. `http_requests_total` and
-  `http_request_duration_seconds` are both labeled by `method`, `handler`
-  (route), and `status`.
-- `make dev` starts a local Prometheus (via docker-compose) that scrapes
+  directly on `app` via `prometheus_fastapi_instrumentator`.
+  `http_requests_total` and `http_request_duration_seconds` are both
+  labeled by `method`, `handler` (route), and `status`.
+- `make dev` starts a local Prometheus that scrapes
   `host.docker.internal:$APP_PORT/metrics` (the app itself runs on the host,
   not in docker-compose). UI at
   `http://localhost:$PROMETHEUS_PORT` (see `.envrc`'s `PROMETHEUS_PORT`).
