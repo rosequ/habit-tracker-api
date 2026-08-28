@@ -16,14 +16,6 @@ Habits can be created, listed, retrieved by ID, and tracked daily via check-ins.
 - category: string, 1-50 chars, required
 - created_at: set server-side, not client-provided
 
-## Habit completion (check-in)
-A habit can have multiple daily completions. Each completion is recorded
-for a specific date and represents one successful check-in for that habit.
-
-- Completion date defaults to today if not provided
-- Cannot record a completion for a future date (returns HTTP 422)
-- Cannot record duplicate completions for the same habit and date (returns HTTP 409)
-
 ## Completions API
 Endpoint: `POST /habits/{habit_id}/completions`
 
