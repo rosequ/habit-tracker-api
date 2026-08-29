@@ -14,8 +14,8 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
   docs/architecture/ARCHITECTURE.md and/or AGENTS.md hasn't caught
   up with it, fix the stale doc so it matches the accepted ADR's
   decision.
-  - ADR 0001 (accepted) — see `docs/adr/0001-two-agent-provider-variables.md`
-    for the split between `AGENT_PROVIDER` and `AGENT_PROVIDER_AUTOMERGE`.
+   - ADR 0001 (accepted) — see `docs/adr/0001-two-agent-provider-variables.md`
+     for the split between `vars.AGENT_PROVIDER` and `vars.AGENT_PROVIDER_AUTOMERGE`.
 - docs/domains/<name>/ — one README per business domain (e.g. habits)
 - app/routes/ — HTTP layer only
 - app/schemas/ — request/response shapes
