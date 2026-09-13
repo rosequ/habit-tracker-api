@@ -26,7 +26,7 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 - app/repository/ — the ONLY layer allowed to touch app/db/
 - app/db/ — engine, session, SQLModel table definitions
 
-Note: The habit completion (check-in) functionality is documented in `docs/domains/habits/README.md` (section "Completions API") and the API endpoint for creating completions lives in `app/routes/habits.py` under the `/habits/{habit_id}/completions` route
+Note: The habit completion (check-in) functionality is documented in `docs/domains/habits/README.md` (section "Completions API") and the API endpoint for creating completions lives in `app/routes/habits.py` under the `/habits/{habit_id}/completions` route. The route returns HTTP 201 on success, 404 if the habit doesn't exist, 422 if completion date is in the future, and 409 if duplicate completion exists for this habit/date.
 
 ## Non-negotiable rules (enforced by lint, not memory)
 - Dependency direction: routes -> schemas -> services -> repository -> db
