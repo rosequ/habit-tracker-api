@@ -29,9 +29,9 @@ Endpoint: `POST /habits/{habit_id}/completions`
 - HTTP 409 if duplicate completion exists for this habit/date
 
 **Error responses:**
-- "Habit not found" (404)
-- "Completion date cannot be in the future" (422)
-- "Completion already recorded for this habit and date" (409)
+- "Habit not found" (404) - thrown by `HabitNotFoundError`
+- "Completion date cannot be in the future" (422) - thrown by `FutureCompletionDateError`
+- "Completion already recorded for this habit and date" (409) - thrown by `DuplicateCompletionError`
 
 **Response model:** `CompletionRead` with fields: `id`, `habit_id`, `completion_date`, `created_at`
 
