@@ -29,9 +29,9 @@ Endpoint: `POST /habits/{habit_id}/completions`
 - HTTP 409 if duplicate completion exists for this habit/date
 
 **Error responses:**
-- "Habit not found" (404) - thrown by `HabitNotFoundError`
-- "Completion date cannot be in the future" (422) - thrown by `FutureCompletionDateError`
-- "Completion already recorded for this habit and date" (409) - thrown by `DuplicateCompletionError`
+- "Habit not found" (404) - thrown by `HabitNotFoundError` (defined in `app/services/completions.py`)
+- "Completion date cannot be in the future" (422) - thrown by `FutureCompletionDateError` (defined in `app/services/completions.py`)
+- "Completion already recorded for this habit and date" (409) - thrown by `DuplicateCompletionError` (defined in `app/services/completions.py`, which wraps the repository's `DuplicateCompletionError` from `app/repository/completions.py`)
 
 **Response model:** `CompletionRead` with fields: `id`, `habit_id`, `completion_date`, `created_at`
 
