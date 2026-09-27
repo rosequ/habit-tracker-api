@@ -1,58 +1,55 @@
-# Implementation log: Issue #27 — Archive Plan.md/Implement.md per branch
+# Implement.md - Documentation Freshness Fixes Implementation
 
-Following Plan.md. Logging steps and issues as they happen.
+This document describes the specific changes made to fix the documentation inconsistencies found in AGENTS.md.
 
-## Steps taken
+## Changes Made
 
-1. `docs/plans/README.md` — new archive folder + documents the naming
-   convention and points at `scripts/archive_plan.sh` / `make archive-plan`.
-2. `scripts/archive_plan.sh` — new script. Resolves issue number (`ISSUE`
-   env, `issue-N` in branch name, else `current_issue_number()` from
-   `scripts/review_common.sh`) and a slug (arg, descriptive branch-name
-   part, `Plan.md`'s own `# Plan: ...` heading, else `plan`), then writes
-   `docs/plans/<issue-or-date>-<slug>.md` (Plan.md + Implement.md content,
-   with a small header noting source branch/timestamp).
-3. `Makefile` — added `archive-plan` target (`make archive-plan
-   [SLUG=...]`).
-4. `AGENTS.md` — added an "Archiving plans" section documenting the manual
-   convention and why it isn't automated via `ci.yml`/a git hook (see
-   Plan.md's "Decision" section for the full reasoning).
-5. `tests/test_archive_plan.py` — 6 unit tests against a throwaway `git
-   init` tmp repo (same pattern as `tests/test_check_file_sizes.py`):
-   issue+slug from branch name, date+branch-name fallback with no issue
-   number, Plan.md-heading fallback when the branch name has no
-   descriptive part, explicit slug argument override, `Implement.md`
-   inclusion, and failure when `Plan.md` is missing.
+### 1. AGENTS.md Line 245 - Clarified "three scheduled workflows"
 
-## Issues hit
+**Before:**
+```
+None of the three scheduled workflows above can use GitHub's native
+gh pr merge --auto: that feature's "wait for required checks" behavior
+only exists via branch protection, which 403s on this repo (issue #7). So
+```
 
-- **Manual dry-run of the script** against a scratch tmp repo (outside this
-  worktree, in the scratchpad dir) surfaced one edge case before I wrote
-  the automated tests: a bare `agent/issue-27`-style branch (no descriptive
-  suffix) strips down to an empty slug after removing the `issue-N`
-  component, which would otherwise produce a redundant/ugly
-  `27-issue-27.md` filename. Fixed by falling further back to slugifying
-  `Plan.md`'s own `# Plan: ...` heading in that case, before finally
-  falling back to a plain `plan` string.
-- **First `make test` run failed** across the whole suite (not just my new
-  tests) with `relation "habits" does not exist` — this worktree's
-  docker-compose Postgres was up but had never had Alembic migrations
-  applied. Ran `uv run alembic upgrade head` (pre-existing project setup
-  step, not something this issue's change needed) and all 18 tests passed,
-  including the 6 new ones.
-- No production/runtime code touched (`app/`), so `make smoke` isn't
-  expected to reveal anything new, but ran it anyway per the loop in
-  AGENTS.md.
+**After:**
+```
+None of the three workflows that never auto-merge (agent-ticket.yml, agent-followup.yml, quality-grader.yml) can use GitHub's native
+gh pr merge --auto: that feature's "wait for required checks" behavior
+only exists via branch protection, which 403s on this repo (issue #7). So
+```
 
-## Verification so far
+**Rationale:** The original text referred to "three scheduled workflows above" without clearly identifying which three workflows were being referenced. The updated text clearly specifies the three workflows that never auto-merge (agent-ticket.yml, agent-followup.yml, quality-grader.yml) and are therefore unable to use GitHub's native gh pr merge --auto feature.
 
-- `make lint` — ruff + import-linter + file-size check, all clean.
-- `make test` — 18 passed (5 pre-existing + 6 new + 2 + 5 file-size/
-  completions/habits — see full list above), 0 failed.
-- Manually dry-ran `scripts/archive_plan.sh` against a scratch tmp repo
-  covering all four slug/issue resolution paths (branch-name slug + issue
-  number, date fallback with no issue number, explicit `SLUG=` override,
-  `Plan.md`-heading fallback) before writing `tests/test_archive_plan.py`
-  to cover the same paths automatically.
+### 2. AGENTS.md Line 285 - Clarified "three scheduled workflows"
 
-## Status: implementation done, pending agent-review-local/cloud + push
+**Before:**
+```
+GitHub auto-disables `schedule:`-triggered workflows after 60 days of no
+repository activity (silently — an email, not a visible Actions-tab
+failure). If one of the three scheduled workflows above appears to have
+stopped running, check that first before assuming a bug in the workflow
+itself.
+```
+
+**After:**
+```
+GitHub auto-disables `schedule:`-triggered workflows after 60 days of no
+repository activity (silently — an email, not a visible Actions-tab
+failure). If one of the scheduled workflows above appears to have
+stopped running, check that first before assuming a bug in the workflow
+itself.
+```
+
+**Rationale:** The original text referred to "three scheduled workflows above" without specifying which three workflows were being referenced. Since AGENTS.md lists 5 scheduled workflows (agent-ticket.yml, agent-followup.yml, doc-gardener.yml, garbage-collector.yml, quality-grader.yml), the term "three scheduled workflows" was ambiguous and potentially misleading. The updated text uses "one of the scheduled workflows" which is clearer and avoids the ambiguity.
+
+## Summary
+
+These changes improve the clarity and consistency of AGENTS.md by:
+
+1. Removing ambiguous references to "three scheduled workflows"
+2. Clearly specifying which workflows are being referenced in each context
+3. Maintaining the accuracy of the information while improving readability
+
+The changes are documentation-only and do not affect the actual functionality of the system.
