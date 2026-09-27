@@ -242,7 +242,7 @@ is lost the same way it always has been before this existed.
   always `needs-human-review` — a report generator shouldn't silently
   rewrite its own audit trail.
 
-None of the three scheduled workflows above can use GitHub's native
+None of the three workflows that never auto-merge (agent-ticket.yml, agent-followup.yml, quality-grader.yml) can use GitHub's native
 `gh pr merge --auto`: that feature's "wait for required checks" behavior
 only exists via branch protection, which 403s on this repo (issue #7). So
 `doc-gardener.yml`/`garbage-collector.yml` run the fast-gates checks inline,
@@ -282,7 +282,7 @@ top of `main`.
 
 GitHub auto-disables `schedule:`-triggered workflows after 60 days of no
 repository activity (silently — an email, not a visible Actions-tab
-failure). If one of the three scheduled workflows above appears to have
+failure). If one of the scheduled workflows above appears to have
 stopped running, check that first before assuming a bug in the workflow
 itself.
 
