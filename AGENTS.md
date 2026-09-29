@@ -4,9 +4,11 @@
 Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 
 ## Where things live
+- docs/architecture/ARCHITECTURE.md — birds-eye system overview (domains,
+  request flow, deployment, observability, automation pipeline)
 - docs/architecture/ — layering rules, conventions; see
-  docs/architecture/ARCHITECTURE.md for a birds-eye system overview
-  (domains, request flow, deployment, observability, automation pipeline)
+  `docs/architecture/api-conventions.md` for full details on the
+  enforced dependency direction and layering contract.
 - docs/adr/ — Architecture Decision Records: the why behind structural
   decisions (see `docs/adr/README.md`). **Only records whose Status:
   "Accepted" are treated as authoritative inputs, the same way the
@@ -15,10 +17,12 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
   up with it, fix the stale doc so it matches the accepted ADR's
   decision.
 - ADR 0001 (accepted) — see `docs/adr/0001-two-agent-provider-variables.md`
-    for the split between `vars.AGENT_PROVIDER` and `vars.AGENT_PROVIDER_AUTOMERGE`, which defines:
-    - `vars.AGENT_PROVIDER` — read by `agent-ticket.yml`, `agent-followup.yml`, and `quality-grader.yml`
-    - `vars.AGENT_PROVIDER_AUTOMERGE` — read by `doc-gardener.yml` and `garbage-collector.yml`
-    for the two auto-merge-capable workflows.
+    for the split between `vars.AGENT_PROVIDER` and
+    `vars.AGENT_PROVIDER_AUTOMERGE`, which defines:
+  - `vars.AGENT_PROVIDER` — read by `agent-ticket.yml`,
+    `agent-followup.yml`, and `quality-grader.yml`
+  - `vars.AGENT_PROVIDER_AUTOMERGE` — read by `doc-gardener.yml` and
+    `garbage-collector.yml`
 - docs/domains/<name>/ — one README per business domain (e.g. habits)
 - app/routes/ — HTTP layer only
 - app/schemas/ — request/response shapes
@@ -93,10 +97,11 @@ if other files changed since `main` but `Plan.md` didn't, so a stale plan left
 over from a previous feature/worktree can't silently rubber-stamp unrelated
 work as "planned." Both also require the agent CLI for whichever
 `AGENT_PROVIDER` is active installed and authenticated separately (they
- shell out to it via `scripts/run_agent.sh` -- see
-  `docs/architecture/agent-providers.md`). Loop: implement ->
- `agent-review-local` -> fix -> repeat until clean -> `agent-review-cloud` ->
- address comments -> repeat.
+shell out to it via `scripts/run_agent.sh` -- see
+`docs/architecture/agent-providers.md` for the North Mini Code (Cohere, via
+OpenCode/OpenRouter) alternative and what's still unverified about it). Loop:
+implement -> `agent-review-local` -> fix -> repeat until clean ->
+`agent-review-cloud` -> address comments -> repeat.
 
 ## Branching
 This is a private repo on GitHub's Free plan, which doesn't support server-side
