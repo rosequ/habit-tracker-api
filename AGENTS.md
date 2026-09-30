@@ -31,7 +31,7 @@ Note: The habit completion (check-in) functionality is documented in `docs/domai
 The completion error responses are handled in `app/routes/habits.py` using these exception types:
 - `HabitNotFoundError` — thrown by `CompletionService` when the habit doesn't exist
 - `FutureCompletionDateError` — thrown by `CompletionService` when the date is in the future
-- `DuplicateCompletionError` — thrown by `CompletionService` when a duplicate exists (this wraps the repository's `DuplicateCompletionError` from `app/repository/completions.py`)
+- `DuplicateCompletionError` — thrown by `CompletionService` when a duplicate exists (this wraps the repository's error imported as `RepositoryDuplicateCompletionError` from `app/repository/completions.py`)
 
 ## Non-negotiable rules (enforced by lint, not memory)
 - Dependency direction: routes -> schemas -> services -> repository -> db
