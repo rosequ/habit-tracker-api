@@ -16,8 +16,10 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
   decision.
 - ADR 0001 (accepted) — see `docs/adr/0001-two-agent-provider-variables.md`
     for the split between `vars.AGENT_PROVIDER` and `vars.AGENT_PROVIDER_AUTOMERGE`, which defines:
-    - `vars.AGENT_PROVIDER` — read by `agent-ticket.yml`, `agent-followup.yml`, and `quality-grader.yml`
-    - `vars.AGENT_PROVIDER_AUTOMERGE` — read by `doc-gardener.yml` and `garbage-collector.yml`
+    - `vars.AGENT_PROVIDER` — read by `agent-ticket.yml`, `agent-followup.yml`, and
+      `quality-grader.yml`
+    - `vars.AGENT_PROVIDER_AUTOMERGE` — read by `doc-gardener.yml` and
+      `garbage-collector.yml`
     for the two auto-merge-capable workflows.
 - docs/domains/<name>/ — one README per business domain (e.g. habits)
 - app/routes/ — HTTP layer only
@@ -25,6 +27,7 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 - app/services/ — business logic
 - app/repository/ — the ONLY layer allowed to touch app/db/
 - app/db/ — engine, session, SQLModel table definitions
+- app/static/ — static HTML/JS assets (e.g. the habit tracker dashboard at `/dashboard`)
 
 Note: The habit completion (check-in) functionality is documented in `docs/domains/habits/README.md` (section "Completions API") and the API endpoint for creating completions lives in `app/routes/habits.py` under the `/habits/{habit_id}/completions` route. The route returns HTTP 201 on success, 404 if the habit doesn't exist, 422 if completion date is in the future, and 409 if duplicate completion exists for this habit/date.
 
