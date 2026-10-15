@@ -6,7 +6,7 @@ from app.schemas.completions import CompletionCreate, CompletionRead
 from app.schemas.habits import HabitCreate, HabitRead
 from app.services.completions import (
     CompletionService,
-    DuplicateCompletionError,
+    DuplicateCompletionError as CompletionDuplicateCompletionError,
     FutureCompletionDateError,
     HabitNotFoundError,
     get_completion_service,
@@ -69,7 +69,7 @@ async def create_completion(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Completion date cannot be in the future",
         ) from exc
-    except DuplicateCompletionError as exc:
+    except CompletionDuplicateCompletionError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Completion already recorded for this habit and date",
