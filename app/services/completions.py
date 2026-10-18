@@ -42,12 +42,9 @@ class CompletionService:
         if habit is None:
             raise HabitNotFoundError
 
-        try:
-            return await self._completion_repository.create(
-                habit_id=habit_id, completion_date=resolved_date
-            )
-        except RepositoryDuplicateCompletionError as exc:
-            raise DuplicateCompletionError from exc
+        return await self._completion_repository.create(
+            habit_id=habit_id, completion_date=resolved_date
+        )
 
 
 def get_completion_service(
