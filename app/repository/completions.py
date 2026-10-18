@@ -2,6 +2,7 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import Depends
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +28,14 @@ class CompletionRepository:
             raise DuplicateCompletionError from exc
         await self._session.refresh(completion)
         return completion
+
+    async def get_completions_by_habit_id(self, habit_id: int) -> list[Completion]:
+        result = await self._session.execute(
+            select(Completion)
+            .where(Completion.habit_id == habit_id)
+            .order_by(Completion.completion_date.asc())
+        )
+        return list(result.scalars().all())
 
 
 def get_completion_repository(

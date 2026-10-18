@@ -75,3 +75,18 @@ async def create_completion(
             detail="Completion already recorded for this habit and date",
         ) from exc
     return CompletionRead.model_validate(completion)
+
+
+@router.get(
+    "/{habit_id}/completions",
+    response_model=list[CompletionRead],
+)
+async def list_completions(
+    habit_id: int,
+    service: Annotated[CompletionService, Depends(get_completion_service)],
+) -> list[CompletionRead]:
+    try:
+        completions = await service.get_completions(habit_id)
+    except HabitNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Habit not found")
+    return [CompletionRead.model_validate(c) for c in completions]
