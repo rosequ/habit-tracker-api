@@ -22,11 +22,11 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
       `garbage-collector.yml`
     for the two auto-merge-capable workflows.
 - docs/domains/<name>/ — one README per business domain (e.g. habits)
-- app/routes/ — HTTP layer only
-- app/schemas/ — request/response shapes
-- app/services/ — business logic
-- app/repository/ — the ONLY layer allowed to touch app/db/
-- app/db/ — engine, session, SQLModel table definitions
+- app/routes/ — HTTP layer only: parses requests, calls a service, returns a schema. No business logic.
+- app/schemas/ — request/response shapes, separate from the DB models.
+- app/services/ — business logic. Services may import from both schemas and repository, but only repository can import from db.
+- app/repository/ — the ONLY layer allowed to touch app/db/: defines repository interfaces that services use.
+- app/db/ — engine, session, SQLModel table definitions.
 - app/static/ — static HTML/JS assets (e.g. the habit tracker dashboard at `/dashboard`)
 
 Note: The habit completion (check-in) functionality is documented in `docs/domains/habits/README.md` (section "Completions API") and the API endpoint for creating completions lives in `app/routes/habits.py` under the `/habits/{habit_id}/completions` route. The route returns HTTP 201 on success, 404 if the habit doesn't exist, 422 if completion date is in the future, and 409 if duplicate completion exists for this habit/date.
@@ -36,7 +36,10 @@ The completion error responses are handled in `app/routes/habits.py` using these
 - `FutureCompletionDateError` — thrown by `CompletionService` when the date is in the future
 - `DuplicateCompletionError` — thrown by `CompletionService` when a duplicate exists (this wraps the repository's error imported as `RepositoryDuplicateCompletionError` from `app/repository/completions.py`)
 
-## Non-negotiable rules (enforced by lint, not memory)
+The actual error response details are defined in `docs/domains/habits/README.md`:
+- "Habit not found" (404) - thrown by `HabitNotFoundError` (defined in `app/services/completions.py`)
+- "Completion date cannot be in the future" (422) - thrown by `FutureCompletionDateError` (defined in `app/services/completions.py`)
+- "Completion already recorded for this habit and date" (409) - thrown by `DuplicateCompletionError` (defined in `app/services/completions.py`, which wraps the repository's error imported as `RepositoryDuplicateCompletionError` from `app/repository/completions.py`)
 - Dependency direction: routes -> schemas -> services -> repository -> db
 - No raw SQL or DB session objects outside app/repository/
 - No business logic in app/routes/ — routes call services, nothing else
@@ -46,13 +49,7 @@ The completion error responses are handled in `app/routes/habits.py` using these
 - `make test`  — unit + structural tests
 - `make dev`   — brings up docker-compose (db, prometheus) and boots the app
   for this worktree (uses .envrc DB/port namespace)
-- `make smoke` — actually boots the app (docker-compose + uvicorn) on
-  `SMOKE_PORT` (default 8098, separate from `APP_PORT` so it won't collide
-  with a `make dev` you already have running) and hits `/health`, which runs
-  a real `SELECT 1`. Catches runtime crashes -- missing env vars, docker-compose
-  not up, a stale process still bound to the port -- that a text-only diff
-  review can never see, because they only manifest by actually running the
-  command.
+- `make smoke` — boots the app (docker-compose + uvicorn) on a dedicated port separate from `APP_PORT` so it won't collide with a `make dev` session. Hits `/health`, which runs a real `SELECT 1`. Catches runtime crashes -- missing env vars, docker-compose not up, a stale process still bound to the port -- that a text-only diff review can never see, because they only manifest by actually running the command.
 - `make ui-smoke` — boots the app the same way `make smoke` does (plus
   `alembic upgrade head`, since the dashboard check below needs real
   tables), then drives a real headless Playwright browser against two
