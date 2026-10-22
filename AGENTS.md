@@ -24,7 +24,7 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
 - docs/domains/<name>/ — one README per business domain (e.g. habits)
 - app/routes/ — HTTP layer only: parses requests, calls a service, returns a schema. No business logic.
 - app/schemas/ — request/response shapes, separate from the DB models.
-- app/services/ — business logic. Services may import from both schemas and repository, but only repository can import from db.
+- app/services/ — business logic. Services import from schemas and repository, and can return DB models that routes then convert to schemas. Only repository can import from db.
 - app/repository/ — the ONLY layer allowed to touch app/db/: defines repository interfaces that services use.
 - app/db/ — engine, session, SQLModel table definitions.
 - app/static/ — static HTML/JS assets (e.g. the habit tracker dashboard at `/dashboard`)
