@@ -21,6 +21,14 @@ Habit Tracker API. Python 3.14, FastAPI, SQLModel (async), Postgres.
     - `vars.AGENT_PROVIDER_AUTOMERGE` — read by `doc-gardener.yml` and
       `garbage-collector.yml`
     for the two auto-merge-capable workflows.
+- ADR 0002 (accepted) — see `docs/adr/0002-plan-md-precommit-gate.md`
+    for the mechanical `Plan.md`-before-implementation pre-commit gate that
+    refuses to commit if any non-`Plan.md` file changes while `Plan.md` itself
+    hasn't changed yet.
+- ADR 0003 (accepted) — see `docs/adr/0003-client-side-hooks-branch-protection-stopgap.md`
+    for the client-side git hooks (`pre-commit` and `pre-push`) that
+    mechanically enforce the repo's lint, test, and Plan.md rules,
+    compensating for the missing server-side branch protection on GitHub's Free plan.
 - docs/domains/<name>/ — one README per business domain (e.g. habits)
 - app/routes/ — HTTP layer only: parses requests, calls a service, returns a schema. No business logic.
 - app/schemas/ — request/response shapes, separate from the DB models.

@@ -25,8 +25,8 @@ Endpoint: `POST /habits/{habit_id}/completions`
 **Response:**
 - HTTP 201 on success
 - HTTP 404 if the habit doesn't exist
-- HTTP 422 if completion date is in the future
-- HTTP 409 if duplicate completion exists for this habit/date
+- HTTP 422 if completion date cannot be in the future
+- HTTP 409 if a completion is already recorded for this habit and date
 
 **Error responses:**
 - "Habit not found" (404) - thrown by `HabitNotFoundError` (defined in `app/services/completions.py`)
