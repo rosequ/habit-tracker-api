@@ -44,10 +44,12 @@ The completion error responses are handled in `app/routes/habits.py` using these
 - `FutureCompletionDateError` — thrown by `CompletionService` when the date is in the future
 - `DuplicateCompletionError` — thrown by `CompletionService` when a duplicate exists (this wraps the repository's error imported as `RepositoryDuplicateCompletionError` from `app/repository/completions.py`)
 
+These exception types are **defined in `app/services/completions.py`** and imported/used in `app/routes/habits.py`.
+
 The actual error response details are defined in `docs/domains/habits/README.md`:
 - "Habit not found" (404) - thrown by `HabitNotFoundError` (defined in `app/services/completions.py`)
 - "Completion date cannot be in the future" (422) - thrown by `FutureCompletionDateError` (defined in `app/services/completions.py`)
-- "Completion already recorded for this habit and date" (409) - thrown by `DuplicateCompletionError` (defined in `app/services/completions.py`, which wraps the repository's error imported as `RepositoryDuplicateCompletionError` from `app/repository/completions.py`)
+- "Completion already recorded for this habit and date" (409) - thrown by `DuplicateCompletionError` (defined in `app/services/completions.py`, which wraps the repository's `DuplicateCompletionError` from `app/repository/completions.py`)
 - Dependency direction: routes -> schemas -> services -> repository -> db
 - No raw SQL or DB session objects outside app/repository/
 - No business logic in app/routes/ — routes call services, nothing else
