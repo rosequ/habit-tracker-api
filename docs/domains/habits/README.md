@@ -20,7 +20,7 @@ Habits can be created, listed, retrieved by ID, and tracked daily via check-ins.
 Endpoint: `POST /habits/{habit_id}/completions`
 
 **Request body:**
-- `completion_date` (optional, date string): If omitted, defaults to today
+- `completion_date` (optional, date string): If omitted, defaults to today (UTC date)
 
 **Response:**
 - HTTP 201 on success
