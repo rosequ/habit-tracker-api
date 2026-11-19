@@ -193,9 +193,9 @@ is lost the same way it always has been before this existed.
   `agent-review-local`/`agent-review-cloud`, goes through
   `scripts/run_agent.sh` rather than calling `claude -p` directly. Two
   separate repository variables pick the backend (both default `claude`):
-  `AGENT_PROVIDER` for the three workflows that never auto-merge
+  `vars.AGENT_PROVIDER` for the three workflows that never auto-merge
   (`agent-ticket.yml`, `agent-followup.yml`, `quality-grader.yml`), and
-  `AGENT_PROVIDER_AUTOMERGE` -- deliberately distinct, not a fallback of the
+  `vars.AGENT_PROVIDER_AUTOMERGE` -- deliberately distinct, not a fallback of the
   first -- for the two that can (`doc-gardener.yml`, `garbage-collector.yml`),
   so flipping the general variable can never silently change what an
   auto-merge-capable workflow runs. See `docs/architecture/agent-providers.md`
